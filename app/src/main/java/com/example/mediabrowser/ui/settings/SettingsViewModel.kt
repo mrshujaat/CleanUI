@@ -19,7 +19,8 @@ import javax.inject.Inject
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val preferencesDataStore: PreferencesDataStore,
-    private val repository: MediaRepository
+    private val repository: MediaRepository,
+    private val backupManager: com.example.mediabrowser.data.backup.BackupManager
 ) : ViewModel() {
 
     val settings: StateFlow<AppSettings> = preferencesDataStore.settingsFlow
@@ -52,8 +53,52 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { preferencesDataStore.setAutoPlayVideos(enabled) }
     }
 
+    fun setHomeFeedType(type: com.example.mediabrowser.domain.model.FeedType) {
+        viewModelScope.launch { preferencesDataStore.setHomeFeedType(type) }
+    }
+
+    // --- Backup / Restore ---
+
+    private val _backupStatus = MutableStateFlow<String?>(null)
+    val backupStatus: StateFlow<String?> = _backupStatus.asStateFlow()
+
+    fun clearBackupStatus() { _backupStatus.value = null }
+
+    /** Produce the backup JSON, then hand it to [onReady] to write to the chosen file. */
+    fun exportBackup(onReady: (String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val jsonText = backupManager.exportToJson()
+                onReady(jsonText)
+                _backupStatus.value = "Backup exported successfully"
+            } catch (e: Exception) {
+                _backupStatus.value = "Export failed: ${e.message}"
+            }
+        }
+    }
+
+    fun importBackup(text: String) {
+        viewModelScope.launch {
+            try {
+                val summary = backupManager.importFromJson(text)
+                _backupStatus.value =
+                    "Restored ${summary.favorites} favourites, ${summary.batches} batches, ${summary.tags} tags"
+            } catch (e: Exception) {
+                _backupStatus.value = "Restore failed: ${e.message}"
+            }
+        }
+    }
+
+    fun setNotificationsEnabled(enabled: Boolean) {
+        viewModelScope.launch { preferencesDataStore.setNotificationsEnabled(enabled) }
+    }
+
     fun setGridColumns(columns: Int) {
         viewModelScope.launch { preferencesDataStore.setGridColumns(columns) }
+    }
+
+    fun setImageQuality(quality: com.example.mediabrowser.domain.model.ImageQuality) {
+        viewModelScope.launch { preferencesDataStore.setImageQuality(quality) }
     }
 
     fun setWifiOnlyDownloads(enabled: Boolean) {
@@ -113,17 +158,41 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun setApiCredentialOne(value: String) {
-        viewModelScope.launch { preferencesDataStore.setApiCredentialOne(value) }
+        // Trim whitespace/newlines — pasted API keys often carry a trailing newline,
+        // which the server rejects as "Missing authentication".
+        viewModelScope.launch { preferencesDataStore.setApiCredentialOne(value.trim()) }
     }
 
     fun setApiCredentialTwo(value: String) {
-        viewModelScope.launch { preferencesDataStore.setApiCredentialTwo(value) }
+        viewModelScope.launch { preferencesDataStore.setApiCredentialTwo(value.trim()) }
     }
 
     fun clearCache() {
         viewModelScope.launch {
             repository.clearImageCache()
             refreshCacheSize()
+        }
+    }
+
+    /** Theme presets applied in one tap from the Themes section. */
+    enum class ThemePreset { DARK, LIGHT }
+
+    fun applyThemePreset(preset: ThemePreset) {
+        viewModelScope.launch {
+            when (preset) {
+                ThemePreset.DARK -> {
+                    preferencesDataStore.setDarkMode(DarkModeOption.DARK)
+                    preferencesDataStore.setBackgroundColor("#000000")
+                    preferencesDataStore.setSurfaceColor("#0E0F11")
+                    preferencesDataStore.setAccentColor("#2DD4BF")
+                }
+                ThemePreset.LIGHT -> {
+                    preferencesDataStore.setDarkMode(DarkModeOption.LIGHT)
+                    preferencesDataStore.setBackgroundColor("#FAFAFC")
+                    preferencesDataStore.setSurfaceColor("#FFFFFF")
+                    preferencesDataStore.setAccentColor("#2DD4BF")
+                }
+            }
         }
     }
 }

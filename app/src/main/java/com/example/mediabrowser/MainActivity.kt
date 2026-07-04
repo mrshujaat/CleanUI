@@ -11,6 +11,7 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.example.mediabrowser.data.local.PreferencesDataStore
 import com.example.mediabrowser.domain.model.AppSettings
 import com.example.mediabrowser.ui.navigation.ArtistNavigationState
+import com.example.mediabrowser.ui.navigation.CategoryNavigationState
 import com.example.mediabrowser.ui.navigation.MediaBrowserNavGraph
 import com.example.mediabrowser.ui.theme.MediaBrowserTheme
 import dagger.hilt.android.AndroidEntryPoint
@@ -25,6 +26,9 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var artistNavigationState: ArtistNavigationState
 
+    @Inject
+    lateinit var categoryNavigationState: CategoryNavigationState
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
@@ -35,7 +39,10 @@ class MainActivity : ComponentActivity() {
             val settings by settingsFlow.collectAsState(initial = AppSettings())
 
             MediaBrowserTheme(settings = settings) {
-                MediaBrowserNavGraph(artistNavigationState = artistNavigationState)
+                MediaBrowserNavGraph(
+                    artistNavigationState = artistNavigationState,
+                    categoryNavigationState = categoryNavigationState
+                )
             }
         }
     }

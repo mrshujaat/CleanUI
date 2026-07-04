@@ -19,12 +19,27 @@ interface MediaRepository {
 
     fun getPostsPaged(tags: String = ""): Flow<PagingData<Post>>
 
+    /** Single highest-scoring post for a tag — used as a representative thumbnail. */
+    suspend fun getTopPostForTag(tag: String): Post?
+
+    /** Flat (non-paged) list of posts — used for small home-row previews. */
+    suspend fun getPostsFlat(tags: String, limit: Int): List<Post>
+
     /** Builds full detail for a post the caller already has in hand (from a grid/feed). */
     suspend fun getPostDetailsFromPost(post: Post): Result<PostDetail>
 
     suspend fun searchTags(query: String): Result<List<TagSuggestion>>
 
     fun getFavoritesPaged(): Flow<PagingData<Post>>
+
+    /** The Poison Feed: personalized, affinity-ranked recommendations. */
+    fun getPoisonFeedPaged(): Flow<PagingData<Post>>
+
+    /** Record that the user opened/viewed a post (weak taste signal). */
+    suspend fun recordPostView(post: Post)
+
+    /** Record a search query as a set of tags (explicit taste signal). */
+    suspend fun recordSearch(tags: List<String>)
 
     fun observeFavoriteIds(): Flow<Set<Long>>
 
@@ -64,4 +79,17 @@ interface MediaRepository {
         category: TagCategory,
         postCount: Int
     )
+
+    // --- Tag batches ("My Poison") ---
+
+    fun observeTagBatches(): Flow<List<com.example.mediabrowser.domain.model.TagBatch>>
+
+    suspend fun createTagBatch(name: String, tags: List<String>): Long
+
+    suspend fun updateTagBatch(id: Long, name: String, tags: List<String>)
+
+    suspend fun deleteTagBatch(id: Long)
+
+    /** Replaces all batches with the given set — used by import. */
+    suspend fun replaceAllTagBatches(batches: List<com.example.mediabrowser.domain.model.TagBatch>)
 }

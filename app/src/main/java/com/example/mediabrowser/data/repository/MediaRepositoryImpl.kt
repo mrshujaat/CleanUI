@@ -1,5 +1,6 @@
 package com.example.mediabrowser.data.repository
 
+import kotlinx.serialization.json.jsonArray
 import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.PagingData
@@ -18,9 +19,11 @@ import com.example.mediabrowser.data.mapper.toDomain as toPostDomain
 import com.example.mediabrowser.data.mapper.toDomain as toDownloadItemDomain
 import com.example.mediabrowser.data.mapper.toFavoriteEntity
 import com.example.mediabrowser.data.mapper.toFavoriteEntityFromDetail // Added for line 105 handling
+import com.example.mediabrowser.data.mapper.toPost
 import com.example.mediabrowser.data.paging.ArchivePagingSource
 import com.example.mediabrowser.data.remote.MediaApiException
 import com.example.mediabrowser.data.remote.ArchiveApi
+import com.example.mediabrowser.data.remote.dto.ArchivePostDto
 import com.example.mediabrowser.domain.model.ContentRating
 import com.example.mediabrowser.domain.model.DownloadItem
 import com.example.mediabrowser.domain.model.DownloadStatus
@@ -35,7 +38,12 @@ import com.example.mediabrowser.domain.model.TagSuggestion
 import com.example.mediabrowser.download.DownloadScheduler
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.json.Json
 import retrofit2.HttpException
 import java.io.IOException
 import java.net.SocketTimeoutException
@@ -43,6 +51,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 private const val DEFAULT_PAGE_SIZE = 20
+private const val AUTOCOMPLETE_URL = "https://api.rule34.xxx/autocomplete.php"
 
 @Singleton
 class MediaRepositoryImpl @Inject constructor(
@@ -53,8 +62,14 @@ class MediaRepositoryImpl @Inject constructor(
     private val downloadScheduler: DownloadScheduler,
     private val preferencesDataStore: PreferencesDataStore,
     private val favoriteArtistDao: FavoriteArtistDao,
-    private val favoriteTagDao: FavoriteTagDao
+    private val favoriteTagDao: FavoriteTagDao,
+    private val tagBatchDao: com.example.mediabrowser.data.local.dao.TagBatchDao,
+    private val poisonEngine: com.example.mediabrowser.data.poison.PoisonEngine
 ) : MediaRepository {
+
+    // Resolved tag categories are stable; cache them in-memory so opening a post
+    // detail doesn't re-hit the network for tags already seen this session.
+    private val tagCategoryCache = java.util.concurrent.ConcurrentHashMap<String, TagSuggestion>()
 
     override fun getPostsPaged(tags: String): Flow<PagingData<Post>> {
         return Pager(
@@ -78,10 +93,79 @@ class MediaRepositoryImpl @Inject constructor(
         ).flow
     }
 
+    /**
+     * Fetches the single highest-scoring post for a given tag — used as the
+     * representative thumbnail for a "Top Series" row card on Home.
+     */
+    override suspend fun getTopPostForTag(tag: String): Post? {
+        return try {
+            val settings = preferencesDataStore.settingsFlow.first()
+            val jsonResponse = archiveApi.getPosts(
+                pageId = 0,
+                limit = 1,
+                tags = "sort:score $tag",
+                apiKey = settings.apiCredentialOne.trim().ifBlank { null },
+                userId = settings.apiCredentialTwo.trim().ifBlank { null }
+            )
+
+            val posts: List<ArchivePostDto> = when {
+                jsonResponse.jsonArray != null ->
+                    Json { ignoreUnknownKeys = true }.decodeFromString(jsonResponse.toString())
+                else -> emptyList()
+            }
+
+            val dto = posts.firstOrNull() ?: return null
+            val favoriteIds = observeFavoriteIds().first()
+            dto.toPost(isFavorite = dto.id in favoriteIds)
+        } catch (e: Exception) {
+            android.util.Log.e("MediaRepository", "getTopPostForTag failed for $tag", e)
+            null
+        }
+    }
+
+    /**
+     * Flat (non-paged) list of posts — used for the small "Most Popular" and
+     * "Trending" preview rows on Home, which only need a handful of items.
+     */
+    override suspend fun getPostsFlat(tags: String, limit: Int): List<Post> {
+        return try {
+            val settings = preferencesDataStore.settingsFlow.first()
+            val jsonResponse = archiveApi.getPosts(
+                pageId = 0,
+                limit = limit,
+                tags = tags.ifBlank { null },
+                apiKey = settings.apiCredentialOne.trim().ifBlank { null },
+                userId = settings.apiCredentialTwo.trim().ifBlank { null }
+            )
+            val posts: List<ArchivePostDto> = when {
+                jsonResponse.jsonArray != null ->
+                    Json { ignoreUnknownKeys = true }.decodeFromString(jsonResponse.toString())
+                else -> emptyList()
+            }
+            val favoriteIds = observeFavoriteIds().first()
+            posts.map { dto -> dto.toPost(isFavorite = dto.id in favoriteIds) }
+        } catch (e: Exception) {
+            android.util.Log.e("MediaRepository", "getPostsFlat failed for tags=$tags", e)
+            emptyList()
+        }
+    }
+
     override suspend fun getPostDetailsFromPost(post: Post): Result<PostDetail> {
         val isFav = favoriteDao.isFavorite(post.id)
-        val artistName = post.tags.lastOrNull()
-        val nonArtistTags = if (artistName != null) post.tags.dropLast(1) else post.tags
+
+        // Resolve real categories from the tag endpoint (bounded by a timeout so a
+        // slow lookup can't freeze the detail). The post JSON has no categories, so
+        // this is what makes Artist/Character/etc. populate correctly.
+        val categorizedTags = try {
+            withTimeout(4000L) { resolveTagCategories(post.tags) }
+        } catch (e: Exception) {
+            android.util.Log.w("TagCategories", "resolve timed out; using cache+heuristic", e)
+            categorizeFromCacheOrHeuristic(post.tags)
+        }
+
+        // Surface the first artist as uploader, but keep artists in the tag list so
+        // the detail UI can render an Artists section from ARTIST-category tags.
+        val artistName = categorizedTags.firstOrNull { it.category == TagCategory.ARTIST }?.name
 
         return Result.success(
             PostDetail(
@@ -98,24 +182,268 @@ class MediaRepositoryImpl @Inject constructor(
                 source = null,
                 uploader = artistName,
                 createdAt = System.currentTimeMillis(),
-                tags = nonArtistTags.map { tagName -> TagInfo(name = tagName, category = TagCategory.GENERAL, postCount = 0) },
+                tags = categorizedTags,
                 isFavorite = isFav
             )
         )
     }
 
+    /** Instant categorization from cache, else local heuristic (timeout fallback). */
+    private fun categorizeFromCacheOrHeuristic(tagNames: List<String>): List<TagInfo> =
+        tagNames.map { name ->
+            val meta = tagCategoryCache[name]
+            if (meta != null) TagInfo(name = meta.name, category = meta.category, postCount = meta.postCount)
+            else TagInfo(name = name, category = categorizeTag(name), postCount = 0)
+        }
+
+    /**
+     * Resolves each tag's real category via per-tag `name=` lookups (rule34's
+     * reliable exact-match param), in bounded-parallel batches, cached so each
+     * unique tag is fetched at most once. Unresolved tags fall back to heuristic.
+     */
+    private suspend fun resolveTagCategories(tagNames: List<String>): List<TagInfo> {
+        if (tagNames.isEmpty()) return emptyList()
+        val distinct = tagNames.distinct()
+        val uncached = distinct.filter { !tagCategoryCache.containsKey(it) }
+
+        if (uncached.isNotEmpty()) {
+            try {
+                val settings = preferencesDataStore.settingsFlow.first()
+                val apiKey = settings.apiCredentialOne.trim().ifBlank { null }
+                val userId = settings.apiCredentialTwo.trim().ifBlank { null }
+
+                uncached.chunked(8).forEach { batch ->
+                    coroutineScope {
+                        batch.map { tagName ->
+                            async {
+                                try {
+                                    val response = archiveApi.getTagByName(
+                                        name = tagName, apiKey = apiKey, userId = userId
+                                    )
+                                    parseTagSuggestionsXml(response.body()?.string().orEmpty())
+                                        .firstOrNull { it.name == tagName }
+                                        ?.let { tagCategoryCache[tagName] = it }
+                                } catch (e: Exception) {
+                                    android.util.Log.w("TagCategories", "lookup failed: $tagName", e)
+                                }
+                            }
+                        }.awaitAll()
+                    }
+                }
+                if (tagCategoryCache.size > 5000) tagCategoryCache.clear()
+            } catch (e: Exception) {
+                android.util.Log.w("TagCategories", "metadata lookup failed; using heuristic", e)
+            }
+        }
+
+        return tagNames.map { name ->
+            val meta = tagCategoryCache[name]
+            if (meta != null) TagInfo(name = meta.name, category = meta.category, postCount = meta.postCount)
+            else TagInfo(name = name, category = categorizeTag(name), postCount = 0)
+        }
+    }
+
+    private fun categorizeTag(tag: String): TagCategory {
+        val lowerTag = tag.lowercase()
+        
+        // Meta tags - technical/descriptive tags
+        val metaTags = setOf(
+            "ai_generated", "absurdres", "highres", "hi_res", "high_quality", "high_resolution",
+            "lowres", "commentary_request", "digital_media_(artwork)", "digital_drawing_(artwork)",
+            "traditional_media_(artwork)", "sketch", "vector", "flash", "animated", "video",
+            "sound", "sound_effects", "tagme", "bad_id", "bad_pixiv_id", "bad_link",
+            "artist_request", "fictional", "official_art", "cosplay", "3d", "2d",
+            "sample", "alternate_breast_size", "alternate_costume", "alternate_view",
+            "censored", "uncensored", "partial_censored", "mosaic_censorship",
+            "bar_censor", "light_censor", "sticker", "text", "watermark"
+        )
+        
+        // Copyright tags - series/franchise names (usually contain parentheses or specific patterns)
+        if (lowerTag.contains("_(series)") || lowerTag.contains("_(franchise)") ||
+            lowerTag.contains("_(game)") || lowerTag.contains("_(anime)") ||
+            lowerTag.contains("_(manga)") || lowerTag.contains("_(novel)") ||
+            lowerTag.contains("_(visual)") || lowerTag.contains("_(project)") ||
+            lowerTag.contains("_(universe)") || lowerTag.contains("_(world)") ||
+            lowerTag == "horimiya" || lowerTag == "fate" || lowerTag == "naruto" ||
+            lowerTag == "one_piece" || lowerTag == "dragon_ball" || lowerTag == "pokemon" ||
+            lowerTag == "arknights" || lowerTag == "genshin_impact" || lowerTag == "hololive") {
+            return TagCategory.COPYRIGHT
+        }
+        
+        // Meta tags
+        if (metaTags.contains(lowerTag) || lowerTag.startsWith("absurdres") ||
+            lowerTag.startsWith("highres") || lowerTag.startsWith("lowres")) {
+            return TagCategory.META
+        }
+        
+        // Artist tags - typically the uploader or specific artist naming patterns
+        // This is a heuristic - in a real implementation, you'd query the API for artist info
+        if (lowerTag.contains("artist:") || lowerTag.contains("(artist)")){
+            //post.tags.size > 0 && lowerTag == post.tags.lastOrNull()?.lowercase()) {
+            // Don't auto-categorize last tag as artist anymore - let it be general
+            // unless it has explicit artist markers
+        }
+        
+        // Character tags - usually have specific naming patterns
+        // This is a simplified heuristic
+        if (lowerTag.contains("_(character)") || lowerTag.contains("char:") ||
+            lowerTag.matches(Regex("^[a-z]+_[a-z_]+\\(.*\\)$"))) {
+            return TagCategory.CHARACTER
+        }
+        
+        // Default to GENERAL for most descriptive tags
+        return TagCategory.GENERAL
+    }
+
     override suspend fun searchTags(query: String): Result<List<TagSuggestion>> {
         if (query.isBlank()) return Result.success(emptyList())
-        return Result.success(
-            listOf(
-                TagSuggestion(
-                    name = query,
-                    displayName = query.replaceFirstChar { it.uppercase() },
-                    category = TagCategory.GENERAL,
-                    postCount = 0
-                )
-            )
+        val settings = preferencesDataStore.settingsFlow.first()
+        val apiKey = settings.apiCredentialOne.trim().ifBlank { null }
+        val userId = settings.apiCredentialTwo.trim().ifBlank { null }
+
+        // The caller (ViewModel) already extracts the trailing term and normalizes
+        // spaces to underscores, so use the query as-is — don't re-split on space,
+        // which would break underscore tags like "naruto_uzumaki".
+        val term = query.trim()
+        if (term.isEmpty()) return Result.success(emptyList())
+
+        // Two sources, merged:
+        //  1) PRIMARY (orange): the native autocomplete endpoint — same ranked,
+        //     alias-aware results r34.app shows. These come first.
+        //  2) SECONDARY: prefix-match from the tag endpoint (cat → cat_girl,
+        //     cat_ears, caty…) for broader coverage autocomplete may miss.
+        // Autocomplete results win on dedupe so a tag in both stays orange.
+        val primary = fetchAutocompleteSuggestions(term, apiKey, userId)
+        val secondary = fetchPrefixSuggestions(term, apiKey, userId)
+
+        val seen = HashSet<String>()
+        val merged = ArrayList<TagSuggestion>(primary.size + secondary.size)
+        primary.forEach { if (seen.add(it.name)) merged += it }
+        secondary.forEach { if (seen.add(it.name)) merged += it }
+
+        return Result.success(merged)
+    }
+
+    /** Native autocomplete — marked primary (orange), kept in the site's ranking. */
+    private suspend fun fetchAutocompleteSuggestions(
+        term: String,
+        apiKey: String?,
+        userId: String?
+    ): List<TagSuggestion> = try {
+        val response = archiveApi.autocompleteTags(
+            url = AUTOCOMPLETE_URL,
+            query = term,
+            apiKey = apiKey,
+            userId = userId
         )
+        parseAutocompleteJson(response.body()?.string().orEmpty())
+    } catch (e: Exception) {
+        android.util.Log.w("SearchTags", "autocomplete failed for '$term'", e)
+        emptyList()
+    }
+
+    /** Prefix-match supplements, sorted by popularity, marked non-primary. */
+    private suspend fun fetchPrefixSuggestions(
+        term: String,
+        apiKey: String?,
+        userId: String?
+    ): List<TagSuggestion> = try {
+        val response = archiveApi.searchTags(
+            namePattern = "$term%",
+            limit = 1000,
+            apiKey = apiKey,
+            userId = userId
+        )
+        parseTagSuggestionsXml(response.body()?.string().orEmpty())
+            .filter { it.name.startsWith(term, ignoreCase = true) }
+            .sortedByDescending { it.postCount }
+            .map { it.copy(isPrimary = false) }
+    } catch (e: Exception) {
+        android.util.Log.w("SearchTags", "prefix search failed for '$term'", e)
+        emptyList()
+    }
+
+    /**
+     * Parses the autocomplete JSON array. Each element:
+     *   { "label": "tag (123)", "value": "tag", "type": "copyright" }
+     * Post count is parsed from the label's trailing "(N)"; type → category.
+     * All results are marked primary (orange).
+     */
+    private fun parseAutocompleteJson(json: String): List<TagSuggestion> {
+        if (json.isBlank()) return emptyList()
+        return try {
+            val arr = Json.parseToJsonElement(json).jsonArray
+            arr.mapNotNull { element ->
+                val obj = element as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+                fun str(key: String): String? =
+                    (obj[key] as? kotlinx.serialization.json.JsonPrimitive)?.content
+
+                val value = str("value")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val label = str("label") ?: value
+                val count = label.substringAfterLast('(', "")
+                    .substringBefore(')', "")
+                    .filter { it.isDigit() }
+                    .toIntOrNull() ?: 0
+
+                TagSuggestion(
+                    name = value,
+                    displayName = value.replace('_', ' ').replaceFirstChar { it.uppercase() },
+                    category = categoryFromTypeString(str("type")),
+                    postCount = count,
+                    isPrimary = true
+                )
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("SearchTags", "Failed to parse autocomplete JSON", e)
+            emptyList()
+        }
+    }
+
+    private fun categoryFromTypeString(type: String?): TagCategory = when (type?.lowercase()) {
+        "artist" -> TagCategory.ARTIST
+        "copyright" -> TagCategory.COPYRIGHT
+        "character" -> TagCategory.CHARACTER
+        "metadata", "meta" -> TagCategory.META
+        else -> TagCategory.GENERAL
+    }
+
+    private fun parseTagSuggestionsXml(xml: String): List<TagSuggestion> {
+        val suggestions = mutableListOf<TagSuggestion>()
+        try {
+            val factory = org.xmlpull.v1.XmlPullParserFactory.newInstance()
+            val parser = factory.newPullParser()
+            parser.setInput(java.io.StringReader(xml))
+
+            var eventType = parser.eventType
+            while (eventType != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
+                if (eventType == org.xmlpull.v1.XmlPullParser.START_TAG && parser.name == "tag") {
+                    val name = parser.getAttributeValue(null, "name") ?: continue
+                    val count = parser.getAttributeValue(null, "count")?.toIntOrNull() ?: 0
+                    val typeCode = parser.getAttributeValue(null, "type")?.toIntOrNull() ?: 0
+
+                    val category = when (typeCode) {
+                        1 -> TagCategory.ARTIST
+                        3 -> TagCategory.COPYRIGHT
+                        4 -> TagCategory.CHARACTER
+                        5 -> TagCategory.META
+                        else -> TagCategory.GENERAL
+                    }
+
+                    suggestions.add(
+                        TagSuggestion(
+                            name = name,
+                            displayName = name.replace('_', ' ').replaceFirstChar { it.uppercase() },
+                            category = category,
+                            postCount = count
+                        )
+                    )
+                }
+                eventType = parser.next()
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("SearchTags", "Failed to parse tag XML", e)
+        }
+        return suggestions
     }
 
     override fun getFavoritesPaged(): Flow<PagingData<Post>> {
@@ -123,6 +451,36 @@ class MediaRepositoryImpl @Inject constructor(
             config = PagingConfig(pageSize = DEFAULT_PAGE_SIZE, enablePlaceholders = false),
             pagingSourceFactory = { favoriteDao.pagingSource() }
         ).flow.map { pagingData -> pagingData.map { entity -> entity.toPostDomain() } }
+    }
+
+    override fun getPoisonFeedPaged(): Flow<PagingData<Post>> {
+        return Pager(
+            config = PagingConfig(
+                pageSize = DEFAULT_PAGE_SIZE,
+                enablePlaceholders = false,
+                initialLoadSize = DEFAULT_PAGE_SIZE
+            ),
+            pagingSourceFactory = {
+                com.example.mediabrowser.data.paging.PoisonPagingSource(
+                    api = archiveApi,
+                    engine = poisonEngine,
+                    preferencesDataStore = preferencesDataStore,
+                    favoriteArtistsProvider = {
+                        favoriteArtistDao.observeAll().first().map { it.artistName }
+                    },
+                    favoriteIdsProvider = { observeFavoriteIds().first() },
+                    pageSize = DEFAULT_PAGE_SIZE
+                )
+            }
+        ).flow
+    }
+
+    override suspend fun recordPostView(post: Post) {
+        poisonEngine.record(post, com.example.mediabrowser.data.poison.PoisonEngine.InteractionType.VIEW)
+    }
+
+    override suspend fun recordSearch(tags: List<String>) {
+        poisonEngine.recordSearch(tags)
     }
 
     override fun observeFavoriteIds(): Flow<Set<Long>> =
@@ -135,6 +493,8 @@ class MediaRepositoryImpl @Inject constructor(
             favoriteDao.deleteById(post.id)
         } else {
             favoriteDao.insert(post.toFavoriteEntity())
+            // Favouriting is the strongest taste signal — feed the engine.
+            poisonEngine.record(post, com.example.mediabrowser.data.poison.PoisonEngine.InteractionType.FAVORITE)
         }
     }
 
@@ -168,6 +528,8 @@ class MediaRepositoryImpl @Inject constructor(
             tagsSnapshot = post.tags.joinToString(" ")
         )
         val downloadId = downloadDao.insert(entity)
+        // Downloading is a strong taste signal.
+        poisonEngine.record(post, com.example.mediabrowser.data.poison.PoisonEngine.InteractionType.DOWNLOAD)
         val wifiOnly = preferencesDataStore.settingsFlow.first().downloadOverWifiOnly
 
         downloadScheduler.enqueueDownload(
@@ -182,6 +544,19 @@ class MediaRepositoryImpl @Inject constructor(
 
     override suspend fun deleteDownload(id: Long) {
         downloadScheduler.cancelDownload(id)
+        // Remove the actual private file from disk, not just the DB row.
+        try {
+            val entity = downloadDao.getById(id)
+            entity?.localUri?.let { uriString ->
+                val uri = android.net.Uri.parse(uriString)
+                uri.path?.let { path ->
+                    val file = java.io.File(path)
+                    if (file.exists()) file.delete()
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("DeleteDownload", "Failed to delete file for $id", e)
+        }
         downloadDao.deleteById(id)
     }
 
@@ -251,5 +626,63 @@ class MediaRepositoryImpl @Inject constructor(
         is IOException -> MediaApiException.NoConnectivity(throwable)
         is MediaApiException -> throwable
         else -> MediaApiException.Unknown(throwable)
+    }
+
+    // --- Tag batches ("My Poison") ---
+
+    override fun observeTagBatches(): Flow<List<com.example.mediabrowser.domain.model.TagBatch>> =
+        tagBatchDao.observeAll().map { list ->
+            list.map { entity ->
+                com.example.mediabrowser.domain.model.TagBatch(
+                    id = entity.id,
+                    name = entity.name,
+                    tags = entity.tags.split(" ").filter { it.isNotBlank() },
+                    createdAt = entity.createdAt,
+                    updatedAt = entity.updatedAt
+                )
+            }
+        }
+
+    override suspend fun createTagBatch(name: String, tags: List<String>): Long {
+        val now = System.currentTimeMillis()
+        return tagBatchDao.insert(
+            com.example.mediabrowser.data.local.entity.TagBatchEntity(
+                name = name.trim(),
+                tags = tags.filter { it.isNotBlank() }.joinToString(" "),
+                createdAt = now,
+                updatedAt = now
+            )
+        )
+    }
+
+    override suspend fun updateTagBatch(id: Long, name: String, tags: List<String>) {
+        val existing = tagBatchDao.getById(id) ?: return
+        tagBatchDao.update(
+            existing.copy(
+                name = name.trim(),
+                tags = tags.filter { it.isNotBlank() }.joinToString(" "),
+                updatedAt = System.currentTimeMillis()
+            )
+        )
+    }
+
+    override suspend fun deleteTagBatch(id: Long) {
+        tagBatchDao.deleteById(id)
+    }
+
+    override suspend fun replaceAllTagBatches(
+        batches: List<com.example.mediabrowser.domain.model.TagBatch>
+    ) {
+        tagBatchDao.clearAll()
+        batches.forEach { batch ->
+            tagBatchDao.insert(
+                com.example.mediabrowser.data.local.entity.TagBatchEntity(
+                    name = batch.name.trim(),
+                    tags = batch.tags.filter { it.isNotBlank() }.joinToString(" "),
+                    createdAt = batch.createdAt,
+                    updatedAt = batch.updatedAt
+                )
+            )
+        }
     }
 }

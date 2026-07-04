@@ -6,6 +6,8 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.core.DataStore
 import com.example.mediabrowser.domain.model.AppSettings
 import com.example.mediabrowser.domain.model.DarkModeOption
 import com.example.mediabrowser.domain.model.LayoutStyle
@@ -31,12 +33,15 @@ class PreferencesDataStore @Inject constructor(
         val SAFE_SEARCH = booleanPreferencesKey("safe_search_enabled")
         val DATA_SAVER = booleanPreferencesKey("data_saver_enabled")
         val AUTOPLAY_VIDEOS = booleanPreferencesKey("autoplay_videos")
+        val NOTIFICATIONS = booleanPreferencesKey("notifications_enabled")
         val GRID_COLUMNS = intPreferencesKey("grid_columns")
+        val IMAGE_QUALITY = stringPreferencesKey("image_quality")
         val CACHE_LIMIT_MB = intPreferencesKey("cache_size_limit_mb")
         val WIFI_ONLY_DOWNLOADS = booleanPreferencesKey("download_over_wifi_only")
 
         val HOME_LAYOUT_STYLE = stringPreferencesKey("home_layout_style")
         val FAVORITES_LAYOUT_STYLE = stringPreferencesKey("favorites_layout_style")
+        val HOME_FEED_TYPE = stringPreferencesKey("home_feed_type")
         val CARD_CORNER_RADIUS = intPreferencesKey("card_corner_radius_dp")
 
         val ACCENT_COLOR = stringPreferencesKey("accent_color_hex")
@@ -61,6 +66,7 @@ class PreferencesDataStore @Inject constructor(
             safeSearchEnabled = prefs[Keys.SAFE_SEARCH] ?: true,
             dataSaverEnabled = prefs[Keys.DATA_SAVER] ?: false,
             autoPlayVideos = prefs[Keys.AUTOPLAY_VIDEOS] ?: true,
+            notificationsEnabled = prefs[Keys.NOTIFICATIONS] ?: true,
             gridColumns = prefs[Keys.GRID_COLUMNS] ?: 3,
             cacheSizeLimitMb = prefs[Keys.CACHE_LIMIT_MB] ?: 250,
             downloadOverWifiOnly = prefs[Keys.WIFI_ONLY_DOWNLOADS] ?: false,
@@ -69,7 +75,14 @@ class PreferencesDataStore @Inject constructor(
                 ?: LayoutStyle.MASONRY,
             favoritesLayoutStyle = LayoutStyle.entries.find { it.name == prefs[Keys.FAVORITES_LAYOUT_STYLE] }
                 ?: LayoutStyle.MASONRY,
+            homeFeedType = com.example.mediabrowser.domain.model.FeedType.entries
+                .find { it.name == prefs[Keys.HOME_FEED_TYPE] }
+                ?: com.example.mediabrowser.domain.model.FeedType.DEFAULT,
             cardCornerRadiusDp = prefs[Keys.CARD_CORNER_RADIUS] ?: 16,
+
+            imageQuality = com.example.mediabrowser.domain.model.ImageQuality.entries
+                .find { it.name == prefs[Keys.IMAGE_QUALITY] }
+                ?: com.example.mediabrowser.domain.model.ImageQuality.MEDIUM,
 
             accentColorHex = prefs[Keys.ACCENT_COLOR] ?: "#2DD4BF",
             backgroundColorHex = prefs[Keys.BACKGROUND_COLOR] ?: "#050607",
@@ -103,6 +116,10 @@ class PreferencesDataStore @Inject constructor(
         context.dataStore.edit { it[Keys.AUTOPLAY_VIDEOS] = enabled }
     }
 
+    suspend fun setNotificationsEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.NOTIFICATIONS] = enabled }
+    }
+
     suspend fun setGridColumns(columns: Int) {
         context.dataStore.edit { it[Keys.GRID_COLUMNS] = columns }
     }
@@ -117,6 +134,14 @@ class PreferencesDataStore @Inject constructor(
 
     suspend fun setHomeLayoutStyle(style: LayoutStyle) {
         context.dataStore.edit { it[Keys.HOME_LAYOUT_STYLE] = style.name }
+    }
+
+    suspend fun setHomeFeedType(type: com.example.mediabrowser.domain.model.FeedType) {
+        context.dataStore.edit { it[Keys.HOME_FEED_TYPE] = type.name }
+    }
+
+    suspend fun setImageQuality(quality: com.example.mediabrowser.domain.model.ImageQuality) {
+        context.dataStore.edit { it[Keys.IMAGE_QUALITY] = quality.name }
     }
 
     suspend fun setFavoritesLayoutStyle(style: LayoutStyle) {

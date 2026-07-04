@@ -1,25 +1,15 @@
 package com.example.mediabrowser.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 
 /**
- * Dark background with a subtle glow radiating from the top, tinted by the
- * current accent color so the whole app's mood shifts with the user's
- * chosen theme color.
+ * Flat app background. The accent-tinted top glow was removed per the design —
+ * the app is now a consistent solid color (pure black in the default dark theme).
+ * The accentColor parameter is kept so existing call sites don't need to change.
  */
-fun Modifier.appBackgroundGradient(accentColor: Color): Modifier = this.background(
-    brush = Brush.radialGradient(
-        colors = listOf(
-            accentColor.copy(alpha = 0.18f),
-            Color(0xFF0A1715),
-            Color(0xFF050607)
-        ),
-        center = Offset(0.5f, 0f),
-        radius = 1200f
-    )
-)
+fun Modifier.appBackgroundGradient(
+    @Suppress("UNUSED_PARAMETER") accentColor: Color,
+    backgroundColor: Color = Color(0xFF000000)
+): Modifier = this.background(backgroundColor)

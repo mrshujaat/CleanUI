@@ -38,6 +38,7 @@ import com.example.mediabrowser.ui.theme.parseHexColor
 fun ArtistScreen(
     profile: ArtistProfile,
     onBackClick: () -> Unit,
+    onNavigateToArtist: (ArtistProfile) -> Unit,
     viewModel: ArtistViewModel = hiltViewModel()
 ) {
     val settings by viewModel.settings.collectAsState()
@@ -52,13 +53,14 @@ fun ArtistScreen(
 
     Scaffold(
         containerColor = Color.Transparent,
-        modifier = Modifier.appBackgroundGradient(accentColor)
+        modifier = Modifier.appBackgroundGradient(accentColor, androidx.compose.material3.MaterialTheme.colorScheme.background)
     ) { paddingValues ->
         PagedPostGrid(
             items = pagingItems,
-            columns = settings.gridColumns.coerceIn(2, 4),
+            columns = settings.gridColumns.coerceIn(1, 4),
             cornerRadiusDp = settings.cardCornerRadiusDp,
             layoutStyle = settings.homeLayoutStyle,
+                    imageQuality = settings.imageQuality,
             onPostClick = { post -> 
                 val index = pagingItems.itemSnapshotList.indexOfFirst { it?.id == post.id }.coerceAtLeast(0)
                 viewModel.openFeedAt(index)
@@ -85,7 +87,8 @@ fun ArtistScreen(
             onDismiss = viewModel::closeFeed,
             onToggleFavorite = { post -> viewModel.toggleFavorite(post) },
             onDownload = { post -> viewModel.downloadPost(post) },
-            getPostDetail = { post -> viewModel.getPostDetail(post) }
+            getPostDetail = { post -> viewModel.getPostDetail(post) },
+            onNavigateToArtist = onNavigateToArtist
         )
     }
 }

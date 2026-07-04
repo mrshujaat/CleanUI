@@ -47,10 +47,25 @@ object NetworkModule {
             .addInterceptor(logging)
             .addInterceptor { chain ->
                 val original = chain.request()
-                val requestWithHeaders = original.newBuilder()
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MediaBrowserApp/1.0")
-                    .build()
-                chain.proceed(requestWithHeaders)
+                // rule34.xxx sits behind Cloudflare, which challenges/blocks requests
+                // that don't look like a real browser. Sending a clean browser-style
+                // User-Agent (no custom app token) plus standard Accept headers makes
+                // the request pass without needing a VPN to change egress IP.
+                //
+                // NOTE: API credentials are NOT sent as headers — rule34 expects them
+                // as `api_key` and `user_id` query params, which ArchiveApi already
+                // attaches. The previous Authorization/X-API-Key headers did nothing
+                // useful and could themselves trip Cloudflare's WAF.
+                val requestBuilder = original.newBuilder()
+                    .header(
+                        "User-Agent",
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                    )
+                    .header("Accept", "application/json, text/plain, */*")
+                    .header("Accept-Language", "en-US,en;q=0.9")
+
+                chain.proceed(requestBuilder.build())
             }
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)

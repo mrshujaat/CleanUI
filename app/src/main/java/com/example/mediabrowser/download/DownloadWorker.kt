@@ -49,6 +49,17 @@ class DownloadWorker @AssistedInject constructor(
         private const val PROGRESS_UPDATE_THRESHOLD = 3 // percent
     }
 
+    /** Posts a Toast on the main thread (workers run off the main thread). */
+    private fun toast(message: String) {
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            android.widget.Toast.makeText(
+                applicationContext,
+                message,
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val downloadId = inputData.getLong(KEY_DOWNLOAD_ID, -1L)
         val fileUrl = inputData.getString(KEY_FILE_URL) ?: return@withContext Result.failure()
@@ -59,24 +70,100 @@ class DownloadWorker @AssistedInject constructor(
 
         downloadDao.updateProgress(downloadId, 0, DownloadStatus.IN_PROGRESS.name)
         notificationHelper.showProgress(downloadId, fileName, 0)
+        // In-app toast the moment a download is enqueued and starts, regardless
+        // of which screen the user is on (the worker always runs).
+        toast("Added to downloads")
 
         return@withContext try {
-            val (localUri, fileSize) = downloadToMediaStore(fileUrl, fileName, mimeType, downloadId)
+            val (localUri, fileSize) = downloadToPrivateStorage(fileUrl, fileName, mimeType, downloadId)
             downloadDao.markCompleted(downloadId, DownloadStatus.COMPLETED.name, localUri, fileSize)
             notificationHelper.showCompleted(downloadId, fileName)
+            // Distinct completion toast based on media type.
+            val isVideo = mimeType.startsWith("video", ignoreCase = true)
+            toast(if (isVideo) "Video downloaded" else "Image downloaded")
             Result.success()
         } catch (e: IOException) {
             downloadDao.markFailed(downloadId, DownloadStatus.FAILED.name, e.message ?: "Download failed")
             notificationHelper.showFailed(downloadId, fileName)
+            toast("Download failed")
             Result.failure()
         } catch (e: Exception) {
             downloadDao.markFailed(downloadId, DownloadStatus.FAILED.name, e.message ?: "Unknown error")
             notificationHelper.showFailed(downloadId, fileName)
+            toast("Download failed")
             Result.failure()
         }
     }
 
-    private suspend fun downloadToMediaStore(
+    /**
+     * Downloads the file into the app's PRIVATE internal storage
+     * (filesDir/downloads/), not the shared MediaStore. This keeps downloads
+     * completely invisible to the system gallery and other apps — they can only
+     * be viewed inside this app. Returns the local file path and byte size.
+     */
+    private suspend fun downloadToPrivateStorage(
+        fileUrl: String,
+        fileName: String,
+        mimeType: String,
+        downloadId: Long
+    ): Pair<String, Long> {
+        // Downloads (especially videos) can legitimately run for minutes. The shared
+        // client's 20s read timeout would abort large files, so derive a client with
+        // generous timeouts for the actual byte transfer. newBuilder() reuses the
+        // existing connection pool/dispatcher, so this is cheap.
+        val downloadClient = okHttpClient.newBuilder()
+            .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(0, java.util.concurrent.TimeUnit.SECONDS)   // no read timeout
+            .writeTimeout(0, java.util.concurrent.TimeUnit.SECONDS)
+            .callTimeout(0, java.util.concurrent.TimeUnit.SECONDS)   // no overall cap
+            .build()
+
+        val request = Request.Builder().url(fileUrl).build()
+        val response = downloadClient.newCall(request).execute()
+
+        if (!response.isSuccessful) {
+            throw IOException("Server returned ${response.code}")
+        }
+
+        val body = response.body ?: throw IOException("Empty response body")
+        val contentLength = body.contentLength()
+
+        // Private app directory — not scanned by the gallery / MediaStore.
+        val downloadsDir = java.io.File(applicationContext.filesDir, "downloads")
+        if (!downloadsDir.exists()) downloadsDir.mkdirs()
+
+        // Disambiguate filename with the download id to avoid collisions.
+        val safeName = "${downloadId}_$fileName".replace(Regex("[^A-Za-z0-9._-]"), "_")
+        val outFile = java.io.File(downloadsDir, safeName)
+
+        var bytesCopied = 0L
+        var lastReportedPercent = -1
+
+        outFile.outputStream().use { outputStream: OutputStream ->
+            body.byteStream().use { inputStream ->
+                val buffer = ByteArray(READ_BUFFER_SIZE)
+                var bytesRead: Int
+                while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                    outputStream.write(buffer, 0, bytesRead)
+                    bytesCopied += bytesRead
+
+                    if (contentLength > 0) {
+                        val percent = ((bytesCopied * 100) / contentLength).toInt()
+                        if (percent - lastReportedPercent >= PROGRESS_UPDATE_THRESHOLD || percent == 100) {
+                            lastReportedPercent = percent
+                            downloadDao.updateProgress(downloadId, percent, DownloadStatus.IN_PROGRESS.name)
+                            notificationHelper.showProgress(downloadId, fileName, percent)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Store as a file:// URI so Coil / ExoPlayer can load it directly.
+        return android.net.Uri.fromFile(outFile).toString() to bytesCopied
+    }
+
+    private suspend fun downloadToMediaStoreUnused(
         fileUrl: String,
         fileName: String,
         mimeType: String,

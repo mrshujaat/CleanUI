@@ -2,6 +2,7 @@ package com.example.mediabrowser.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -33,7 +34,8 @@ fun FullScreenLoading(modifier: Modifier = Modifier) {
 fun FullScreenError(
     message: String,
     onRetry: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onBack: (() -> Unit)? = null
 ) {
     Column(
         modifier = modifier
@@ -52,8 +54,15 @@ fun FullScreenError(
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(top = 12.dp, bottom = 16.dp)
         )
-        Button(onClick = onRetry) {
-            Text(text = "Retry")
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (onBack != null) {
+                androidx.compose.material3.OutlinedButton(onClick = onBack) {
+                    Text(text = "Back")
+                }
+            }
+            Button(onClick = onRetry) {
+                Text(text = "Retry")
+            }
         }
     }
 }

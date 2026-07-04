@@ -17,6 +17,9 @@ fun FavoriteEntity.toDomain(): Post {
         id = this.postId, 
         previewUrl = this.previewUrl,
         thumbnailUrl = this.thumbnailUrl,
+        // Favorites table predates sampleUrl; fall back to fileUrl so favorited
+        // images still render at full quality. (Re-favoriting refreshes this.)
+        sampleUrl = this.fileUrl,
         fileUrl = this.fileUrl,
         width = this.width,
         height = this.height,
@@ -46,6 +49,7 @@ fun Post.toFavoriteEntity(): FavoriteEntity {
 // 3. Map Download Database Entity to domain DownloadItem
 fun DownloadEntity.toDomain(): DownloadItem {
     return DownloadItem(
+        id = this.id,
         postId = this.postId, 
         fileUrl = this.fileUrl,
         localUri = this.localUri, 

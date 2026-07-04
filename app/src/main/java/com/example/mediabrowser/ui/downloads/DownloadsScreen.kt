@@ -46,6 +46,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import coil.compose.AsyncImage
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.material.icons.filled.PlayCircle
+import kotlinx.coroutines.withContext
+import coil.request.videoFrameMillis
+import com.example.mediabrowser.domain.model.ArtistProfile
 import com.example.mediabrowser.domain.model.DownloadItem
 import com.example.mediabrowser.domain.model.DownloadStatus
 import com.example.mediabrowser.ui.components.MasonryGrid
@@ -55,28 +61,37 @@ import kotlinx.coroutines.delay
 
 @Composable
 fun DownloadsScreen(
+    onNavigateToArtist: (ArtistProfile) -> Unit,
     viewModel: DownloadsViewModel = hiltViewModel()
 ) {
-    val downloads by viewModel.downloads.collectAsState()
-    val completedPosts by viewModel.completedPosts.collectAsState() // FIXED: Read flattened state from ViewModel
+    val downloads by viewModel.sectionedDownloads.collectAsState()
+    val completedPosts by viewModel.sectionedCompletedPosts.collectAsState()
+    val section by viewModel.section.collectAsState()
     val viewStyle by viewModel.viewStyle.collectAsState()
     val openFeedIndex by viewModel.openFeedIndex.collectAsState()
     val toastMessage by viewModel.toastMessage.collectAsState()
+    val settings by viewModel.settings.collectAsState()
 
     var sortMenuExpanded by remember { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             containerColor = Color.Transparent,
-            modifier = Modifier.appBackgroundGradient(Color(0xFF2DD4BF))
+            modifier = Modifier.appBackgroundGradient(Color(0xFF2DD4BF), androidx.compose.material3.MaterialTheme.colorScheme.background)
         ) { paddingValues ->
             Column(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp),
-                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp)
                 ) {
-                    Text(text = "Downloads", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-                    Row {
+                    Text(
+                        text = "Downloads",
+                        color = Color.White,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().align(Alignment.Center)
+                    )
+                    Row(modifier = Modifier.align(Alignment.CenterEnd)) {
                         IconButton(onClick = {
                             viewModel.setViewStyle(
                                 if (viewStyle == DownloadViewStyle.LIST) DownloadViewStyle.GRID else DownloadViewStyle.LIST
@@ -106,9 +121,32 @@ fun DownloadsScreen(
                     }
                 }
 
+                // Images / Videos section toggle.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp)
+                ) {
+                    SectionToggleButton(
+                        label = "Images",
+                        selected = section == DownloadSection.IMAGES,
+                        onClick = { viewModel.setSection(DownloadSection.IMAGES) }
+                    )
+                    SectionToggleButton(
+                        label = "Videos",
+                        selected = section == DownloadSection.VIDEOS,
+                        onClick = { viewModel.setSection(DownloadSection.VIDEOS) }
+                    )
+                }
+
                 if (downloads.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("No downloads yet.", color = Color(0xFF8A8D91))
+                        Text(
+                            if (section == DownloadSection.VIDEOS) "No videos downloaded yet."
+                            else "No images downloaded yet.",
+                            color = Color(0xFF8A8D91)
+                        )
                     }
                 } else when (viewStyle) {
                     DownloadViewStyle.LIST -> {
@@ -127,7 +165,8 @@ fun DownloadsScreen(
                         // FIXED: Replaced nested parent layout container with a clean standalone container
                         MasonryGrid(
                             items = downloads,
-                            columns = 3,
+                            columns = settings.gridColumns.coerceIn(1, 4),
+                            key = { item -> item.id },
                             modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
                             aspectRatioOf = { item ->
                                 if (item.height > 0) item.width.toFloat() / item.height.toFloat() else 0.75f
@@ -165,7 +204,8 @@ fun DownloadsScreen(
             onDismiss = viewModel::closeFeed,
             onToggleFavorite = { /* disabled for downloaded items */ },
             onDownload = { /* disabled for downloaded items */ },
-            getPostDetail = { post -> viewModel.getPostDetail(post) }
+            getPostDetail = { post -> viewModel.getPostDetail(post) },
+            onNavigateToArtist = onNavigateToArtist
         )
     }
 }
@@ -177,12 +217,7 @@ private fun DownloadRow(item: DownloadItem, onDelete: () -> Unit, onClick: () ->
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(modifier = Modifier.size(56.dp).clip(RoundedCornerShape(8.dp))) {
-            AsyncImage(
-                model = item.localUri ?: item.fileUrl,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
-            )
+            MediaThumbnail(item = item, modifier = Modifier.fillMaxSize())
         }
 
         Column(modifier = Modifier.padding(horizontal = 12.dp).weight(1f)) {
@@ -236,16 +271,99 @@ private fun DownloadGridCell(item: DownloadItem, onClick: () -> Unit) {
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .clickable(onClick = onClick)
     ) {
-        AsyncImage(
-            model = item.localUri ?: item.fileUrl,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize()
-        )
+        MediaThumbnail(item = item, modifier = Modifier.fillMaxSize())
         if (item.status == DownloadStatus.IN_PROGRESS || item.status == DownloadStatus.QUEUED) {
             Box(modifier = Modifier.fillMaxWidth().padding(4.dp)) {
                 LinearProgressIndicator(progress = item.progress / 100f, modifier = Modifier.fillMaxWidth())
             }
         }
+    }
+}
+/** Pill toggle button for the Images/Videos section switch. */
+@Composable
+private fun SectionToggleButton(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .background(
+                if (selected) Color.White else Color(0xFF1A1D1F),
+                RoundedCornerShape(50)
+            )
+            .clickable { onClick() }
+            .padding(horizontal = 20.dp, vertical = 8.dp)
+    ) {
+        Text(
+            text = label,
+            color = if (selected) Color(0xFF111111) else Color(0xFF8A8D91),
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+/**
+ * Shows a thumbnail for a downloaded item. For images it loads normally via Coil.
+ * For videos it extracts the first frame with MediaMetadataRetriever (no ExoPlayer,
+ * no extra dependency) and caches it in state — this is what makes downloaded video
+ * thumbnails appear without spinning up a player per cell.
+ */
+@Composable
+private fun MediaThumbnail(item: DownloadItem, modifier: Modifier = Modifier) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val isVideo = item.mediaType == com.example.mediabrowser.domain.model.MediaType.VIDEO
+    val source = item.localUri ?: item.fileUrl
+
+    if (!isVideo) {
+        AsyncImage(
+            model = source,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = modifier
+        )
+        return
+    }
+
+    // Extract the first video frame once, off the main thread, keyed by the source.
+    var frame by remember(source) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    LaunchedEffect(source) {
+        frame = withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val retriever = android.media.MediaMetadataRetriever()
+            try {
+                if (source.startsWith("file://") || source.startsWith("/")) {
+                    retriever.setDataSource(android.net.Uri.parse(source).path)
+                } else {
+                    retriever.setDataSource(source, HashMap())
+                }
+                // Frame at ~1s, or the first available frame.
+                retriever.getFrameAtTime(1_000_000, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                    ?: retriever.frameAtTime
+            } catch (e: Exception) {
+                null
+            } finally {
+                try { retriever.release() } catch (_: Exception) {}
+            }
+        }
+    }
+
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        val bmp = frame
+        if (bmp != null) {
+            androidx.compose.foundation.Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+        // Small play badge so videos read as videos.
+        Icon(
+            imageVector = Icons.Filled.PlayCircle,
+            contentDescription = null,
+            tint = Color.White.copy(alpha = 0.85f),
+            modifier = Modifier.size(24.dp)
+        )
     }
 }

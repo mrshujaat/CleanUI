@@ -49,12 +49,10 @@ fun MediaBrowserTheme(
     dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
-    val systemDark = isSystemInDarkTheme()
-    val useDarkTheme = when (settings.darkMode) {
-        DarkModeOption.SYSTEM -> systemDark
-        DarkModeOption.LIGHT -> false
-        DarkModeOption.DARK -> true
-    }
+    // Light mode is not implemented yet — the app's custom colors all assume a
+    // dark background. Force dark regardless of the system setting or the saved
+    // preference, otherwise a phone in system-light renders white-on-white.
+    val useDarkTheme = true
 
     val accent = parseHexColor(settings.accentColorHex, AccentPrimaryDark)
     val background = parseHexColor(settings.backgroundColorHex, BackgroundDark)
@@ -99,8 +97,18 @@ fun MediaBrowserTheme(
     androidx.compose.runtime.CompositionLocalProvider(LocalTagColors provides tagColors) {
         MaterialTheme(
             colorScheme = colorScheme,
-            typography = AppTypography,
-            content = content
-        )
+            typography = AppTypography
+        ) {
+            // Provided INSIDE MaterialTheme so it overrides MaterialTheme's own
+            // default (bodyLarge) text style. This makes Manjari the baseline for
+            // every Text — including inline-styled ones that only set size/weight/
+            // color — since they inherit this and override just what they specify.
+            androidx.compose.runtime.CompositionLocalProvider(
+                androidx.compose.material3.LocalTextStyle provides
+                    androidx.compose.material3.LocalTextStyle.current.copy(fontFamily = Manjari)
+            ) {
+                content()
+            }
+        }
     }
 }

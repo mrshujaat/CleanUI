@@ -42,23 +42,52 @@ object DatabaseModule {
     fun provideFavoriteTagDao(db: AppDatabase): FavoriteTagDao = db.favoriteTagDao()
 
     @Provides
+    fun provideTagBatchDao(db: AppDatabase): com.example.mediabrowser.data.local.dao.TagBatchDao =
+        db.tagBatchDao()
+
+    @Provides
+    fun provideInteractionDao(db: AppDatabase): com.example.mediabrowser.data.local.dao.InteractionDao =
+        db.interactionDao()
+
+    @Provides
+    fun provideAffinityDao(db: AppDatabase): com.example.mediabrowser.data.local.dao.AffinityDao =
+        db.affinityDao()
+
+    @Provides
     @Singleton
     fun provideImageLoader(
         @ApplicationContext context: Context,
         okHttpClient: OkHttpClient
     ): ImageLoader = ImageLoader.Builder(context)
         .okHttpClient(okHttpClient)
+        // Lets Coil decode a frame from video files (local .mp4) so downloaded
+        // videos can show a real thumbnail. Requires the coil-video dependency.
+        .components {
+            add(coil.decode.VideoFrameDecoder.Factory())
+        }
         .memoryCache {
             MemoryCache.Builder(context)
-                .maxSizePercent(0.35) // increased from 0.25 to reduce re-decoding while scrolling
+                // Large memory cache so images that scrolled off-screen stay decoded
+                // and reappear instantly when you scroll back (the main complaint).
+                .maxSizePercent(0.50)
                 .build()
         }
         .diskCache {
             DiskCache.Builder()
                 .directory(context.cacheDir.resolve("image_cache"))
-                .maxSizeBytes(250L * 1024 * 1024)
+                .maxSizeBytes(2048L * 1024 * 1024)
                 .build()
         }
-        .crossfade(true)
+        // Don't re-validate cached images against the server — serve straight from
+        // cache. Without this, fast scrolling fires conditional requests that get
+        // cancelled mid-flight, leaving cells blank. This is the key fix.
+        .respectCacheHeaders(false)
+        // RGB_565 uses half the memory of ARGB_8888, so roughly twice as many images
+        // fit in the memory cache. For opaque photos the quality difference is minimal.
+        .bitmapConfig(android.graphics.Bitmap.Config.RGB_565)
+        .crossfade(200)
+        // Temporary: log Coil's decoding so we can see whether the video frame
+        // decoder runs and why a thumbnail might fail. Remove once thumbnails work.
+        .logger(coil.util.DebugLogger())
         .build()
 }

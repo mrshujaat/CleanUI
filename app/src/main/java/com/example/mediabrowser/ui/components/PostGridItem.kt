@@ -9,7 +9,6 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,13 +17,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -38,7 +37,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
-import coil.compose.SubcomposeAsyncImage
+import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.mediabrowser.domain.model.MediaType
 import com.example.mediabrowser.domain.model.Post
@@ -46,8 +45,10 @@ import com.example.mediabrowser.domain.model.TagCategory
 
 /**
  * Masonry/grid cell: rounded card showing the media at its real aspect
- * ratio, with score/favorite overlays, plus an expand toggle that reveals
- * a compact inline summary of tags without leaving the grid.
+ * ratio, with score/favorite overlays. Tapping an image post opens the
+ * full feed/detail modal; tapping a video post opens VideoModal directly.
+ * There is no inline tag expansion in the grid — tags are only shown and
+ * interactive inside the full detail modal.
  */
 @OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
@@ -55,11 +56,15 @@ fun PostGridItem(
     post: Post,
     onClick: () -> Unit,
     onToggleFavorite: () -> Unit,
+    onDownload: () -> Unit = {},
     onTagClick: (String, TagCategory) -> Unit = { _, _ -> },
     cornerRadiusDp: Int = 16,
+    columns: Int = 2,
+    imageQuality: com.example.mediabrowser.domain.model.ImageQuality =
+        com.example.mediabrowser.domain.model.ImageQuality.MEDIUM,
     modifier: Modifier = Modifier
 ) {
-    var expanded by remember { mutableStateOf(false) }
+    var showVideoModal by remember { mutableStateOf(false) }
     val aspectRatio = if (post.height > 0) post.width.toFloat() / post.height.toFloat() else 0.75f
 
     Column(
@@ -72,19 +77,57 @@ fun PostGridItem(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(aspectRatio.coerceIn(0.5f, 1.6f))
-                .combinedClickable(
-                    onClick = onClick,
-                    onLongClick = onToggleFavorite
-                )
         ) {
-            SubcomposeAsyncImage(
+            // r34.app loads fast and looks good because it shows the medium
+            // pre-resampled image (sample_url), not the multi-MB original. We do the
+            // same here: sampleUrl in the grid for every column count. It's sharp
+            // enough and a fraction of the size, so it loads quickly. Videos show
+            // their preview thumbnail (the file_url is the actual video).
+            val imageUrl = when {
+                post.fileType != MediaType.IMAGE -> post.thumbnailUrl
+                else -> when (imageQuality) {
+                    com.example.mediabrowser.domain.model.ImageQuality.LOW -> post.previewUrl
+                    com.example.mediabrowser.domain.model.ImageQuality.MEDIUM -> post.sampleUrl
+                    com.example.mediabrowser.domain.model.ImageQuality.HIGH -> post.fileUrl
+                }
+            }
+            // Progressive loading: the tiny preview loads near-instantly and fills
+            // the cell immediately (so nothing is blank while scrolling fast). The
+            // higher-quality image then loads on top and crossfades in when ready.
+            val lowResUrl = post.previewUrl
+            if (post.fileType == MediaType.IMAGE && lowResUrl.isNotBlank() && lowResUrl != imageUrl) {
+                AsyncImage(
+                    model = ImageRequest.Builder(androidx.compose.ui.platform.LocalContext.current)
+                        .data(lowResUrl)
+                        .memoryCacheKey(lowResUrl)
+                        .crossfade(false)
+                        .build(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+            AsyncImage(
                 model = ImageRequest.Builder(androidx.compose.ui.platform.LocalContext.current)
-                    .data(post.thumbnailUrl)
+                    .data(imageUrl)
+                    .memoryCacheKey(imageUrl)
+                    .placeholderMemoryCacheKey(lowResUrl)
                     .crossfade(true)
                     .build(),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier
+                    .fillMaxSize()
+                    .combinedClickable(
+                        onClick = {
+                            if (post.fileType == MediaType.VIDEO) {
+                                showVideoModal = true
+                            } else {
+                                onClick()
+                            }
+                        },
+                        onLongClick = onToggleFavorite
+                    )
             )
 
             if (post.fileType != MediaType.IMAGE) {
@@ -98,29 +141,11 @@ fun PostGridItem(
                 )
             }
 
-            this@Column.AnimatedVisibility(
-            visible = post.isFavorite,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(6.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Filled.Favorite,
-                contentDescription = "Favorited",
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier
-                    .background(Color.Black.copy(alpha = 0.35f), RoundedCornerShape(50))
-                    .padding(4.dp)
-                    .size(16.dp)
-            )
-        }
-
+            // Score badge moved to top-left.
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
-                    .align(Alignment.BottomStart)
+                    .align(Alignment.TopStart)
                     .padding(6.dp)
                     .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(8.dp))
                     .padding(horizontal = 6.dp, vertical = 2.dp)
@@ -138,40 +163,42 @@ fun PostGridItem(
                 )
             }
 
-            if (post.tags.isNotEmpty()) {
-                IconButton(
-                    onClick = { expanded = !expanded },
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(2.dp)
-                        .size(28.dp)
-                ) {
-                    Icon(
-                        imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = if (expanded) "Hide details" else "Show details",
-                        tint = Color.White,
-                        modifier = Modifier
-                            .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(50))
-                            .padding(2.dp)
-                    )
-                }
-            }
-        }
-
-        if (expanded && post.tags.isNotEmpty()) {
-            FlowRow(
+            // Transparent quick-favorite heart at bottom-left. Red when favorited.
+            Icon(
+                imageVector = if (post.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                contentDescription = "Favorite",
+                tint = if (post.isFavorite) Color(0xFFE53935) else Color.White,
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
-            ) {
-                post.tags.take(12).forEach { tagName ->
-                    TagChip(
-                        label = tagName.replace('_', ' '),
-                        category = TagCategory.GENERAL,
-                        onClick = { onTagClick(tagName, TagCategory.GENERAL) }
-                    )
-                }
-            }
+                    .align(Alignment.BottomStart)
+                    .padding(6.dp)
+                    .background(Color.Black.copy(alpha = 0.35f), RoundedCornerShape(50))
+                    .clickable { onToggleFavorite() }
+                    .padding(6.dp)
+                    .size(20.dp)
+            )
+
+            // Transparent quick-download at bottom-right.
+            Icon(
+                imageVector = Icons.Filled.Download,
+                contentDescription = "Download",
+                tint = Color.White,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(6.dp)
+                    .background(Color.Black.copy(alpha = 0.35f), RoundedCornerShape(50))
+                    .clickable { onDownload() }
+                    .padding(6.dp)
+                    .size(20.dp)
+            )
         }
+    }
+
+    if (showVideoModal) {
+        VideoModal(
+            videoUrl = post.fileUrl,
+            onDismiss = { showVideoModal = false },
+            isFavorite = post.isFavorite,
+            onToggleFavorite = onToggleFavorite
+        )
     }
 }

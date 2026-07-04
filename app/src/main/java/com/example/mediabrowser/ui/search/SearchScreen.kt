@@ -1,6 +1,12 @@
 package com.example.mediabrowser.ui.search
 
+import androidx.compose.runtime.remember
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,23 +18,39 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -36,10 +58,12 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.paging.compose.collectAsLazyPagingItems
+import com.example.mediabrowser.domain.model.ArtistProfile
 import com.example.mediabrowser.domain.model.TagSuggestion
 import com.example.mediabrowser.ui.components.PagedPostGrid
 import com.example.mediabrowser.ui.components.PostFeedScreen
@@ -49,6 +73,7 @@ import com.example.mediabrowser.ui.theme.parseHexColor
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SearchScreen(
+    onNavigateToArtist: (ArtistProfile) -> Unit,
     viewModel: SearchViewModel = hiltViewModel()
 ) {
     val query by viewModel.queryText.collectAsState()
@@ -58,189 +83,328 @@ fun SearchScreen(
     val settings by viewModel.settings.collectAsState()
     val openFeedIndex by viewModel.openFeedIndex.collectAsState()
     val accentColor = parseHexColor(settings.accentColorHex, Color(0xFF2DD4BF))
+    var showSaveBatchDialog by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     Scaffold(
         containerColor = Color.Transparent,
-        modifier = Modifier.appBackgroundGradient(accentColor)
+        modifier = Modifier.appBackgroundGradient(accentColor, androidx.compose.material3.MaterialTheme.colorScheme.background)
     ) { paddingValues ->
-        when {
-            suggestions.isNotEmpty() && query.isNotBlank() -> {
-                Column(
-                    modifier = Modifier.fillMaxSize().padding(paddingValues).padding(horizontal = 16.dp)
-                ) {
-                    SearchHeader(
-                        query = query,
-                        onQueryChanged = viewModel::onQueryChanged,
-                        selectedTags = selectedTags,
-                        onTagRemoved = viewModel::onTagRemoved,
-                        onSubmit = viewModel::onSearchSubmit
-                    )
-                    TagSuggestionsList(suggestions, viewModel::onTagSelected)
+        // The search header is rendered ONCE here, never inside a conditional
+        // branch — so the text field instance is stable and never loses focus when
+        // suggestions appear/disappear or results load. Only the content BELOW the
+        // header swaps based on state.
+        val showSuggestions = suggestions.isNotEmpty() && query.text.isNotBlank()
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                SearchHeader(
+                    query = query,
+                    onQueryChanged = viewModel::onQueryChanged,
+                    selectedTags = selectedTags,
+                    onTagRemoved = viewModel::onTagRemoved,
+                    onSubmit = viewModel::onSearchSubmit,
+                    onClear = viewModel::clearSearch
+                )
+                if (selectedTags.isNotEmpty() && !showSuggestions) {
+                    Box(
+                        modifier = Modifier
+                            .padding(top = 8.dp)
+                            .border(1.dp, Color(0xFF8A8D91), RoundedCornerShape(50))
+                            .clickable { showSaveBatchDialog = true }
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
+                        Text("Save Batch", color = Color.White, fontSize = 14.sp)
+                    }
                 }
             }
-            isSearchActive -> {
-                val results = viewModel.searchResults.collectAsLazyPagingItems()
-                PagedPostGrid(
-                    items = results,
-                    columns = settings.gridColumns.coerceIn(1, 4),
-                    cornerRadiusDp = settings.cardCornerRadiusDp,
-                    layoutStyle = settings.homeLayoutStyle,
-                    onPostClick = { post ->
-                        val index = (0 until results.itemCount).firstOrNull { results[it]?.id == post.id } ?: 0
-                        viewModel.openFeedAt(index)
-                    },
-                    onToggleFavorite = { post -> viewModel.toggleFavorite(post) },
-                    headerContent = {
-                        Column(modifier = Modifier.padding(horizontal = 8.dp)) {
-                            SearchHeader(
-                                query = query,
-                                onQueryChanged = viewModel::onQueryChanged,
-                                selectedTags = selectedTags,
-                                onTagRemoved = viewModel::onTagRemoved,
-                                onSubmit = viewModel::onSearchSubmit
-                            )
-                            Text(
-                                text = "Results",
-                                color = Color.White,
-                                fontSize = 22.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)
-                            )
-                            Text(
-                                text = "Tags & filters",
-                                color = Color(0xFF8A8D91),
-                                fontSize = 14.sp,
-                                modifier = Modifier.padding(bottom = 16.dp)
-                            )
-                        }
-                    },
-                    emptyContent = {
-                        Text("No results found.", color = Color(0xFF8A8D91), modifier = Modifier.padding(24.dp))
-                    },
-                    modifier = Modifier.fillMaxSize().padding(paddingValues)
-                )
 
-                openFeedIndex?.let { index ->
-                    PostFeedScreen(
-                        startIndex = index,
+            when {
+                showSuggestions -> {
+                    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                        TagSuggestionsList(suggestions, viewModel::onTagSelected)
+                    }
+                }
+                isSearchActive -> {
+                    val results = viewModel.searchResults.collectAsLazyPagingItems()
+                    PagedPostGrid(
                         items = results,
-                        onDismiss = viewModel::closeFeed,
+                        columns = settings.gridColumns.coerceIn(1, 4),
+                        cornerRadiusDp = settings.cardCornerRadiusDp,
+                        layoutStyle = settings.homeLayoutStyle,
+                        imageQuality = settings.imageQuality,
+                        onPostClick = { post ->
+                            val index = (0 until results.itemCount).firstOrNull { results[it]?.id == post.id } ?: 0
+                            viewModel.recordView(post)
+                            viewModel.openFeedAt(index)
+                        },
                         onToggleFavorite = { post -> viewModel.toggleFavorite(post) },
                         onDownload = { post -> viewModel.downloadPost(post) },
-                        getPostDetail = { post -> viewModel.getPostDetail(post) }
+                        emptyContent = {
+                            Text("No results found.", color = Color(0xFF8A8D91), modifier = Modifier.padding(24.dp))
+                        },
+                        onBack = { viewModel.backToTagEditing() },
+                        modifier = Modifier.fillMaxSize()
                     )
+
+                    openFeedIndex?.let { index ->
+                        PostFeedScreen(
+                            startIndex = index,
+                            items = results,
+                            onDismiss = viewModel::closeFeed,
+                            onToggleFavorite = { post -> viewModel.toggleFavorite(post) },
+                            onDownload = { post -> viewModel.downloadPost(post) },
+                            getPostDetail = { post -> viewModel.getPostDetail(post) },
+                            onNavigateToArtist = onNavigateToArtist
+                        )
+                    }
+                }
+                else -> {
+                    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+                        SearchHint()
+                    }
                 }
             }
-            else -> {
-                Column(
-                    modifier = Modifier.fillMaxSize().padding(paddingValues).padding(horizontal = 16.dp)
-                ) {
-                    SearchHeader(
-                        query = query,
-                        onQueryChanged = viewModel::onQueryChanged,
-                        selectedTags = selectedTags,
-                        onTagRemoved = viewModel::onTagRemoved,
-                        onSubmit = viewModel::onSearchSubmit
-                    )
-                    SearchHint()
-                }
-            }
+
+        if (showSaveBatchDialog) {
+            com.example.mediabrowser.ui.favorites.NameBatchDialog(
+                initialTags = selectedTags,
+                onConfirm = { name ->
+                    viewModel.saveCurrentTagsAsBatch(name)
+                    showSaveBatchDialog = false
+                    android.widget.Toast.makeText(
+                        context,
+                        "Saved batch \"$name\"",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                },
+                onDismiss = { showSaveBatchDialog = false }
+            )
         }
     }
+}
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SearchHeader(
-    query: String,
-    onQueryChanged: (String) -> Unit,
+    query: TextFieldValue,
+    onQueryChanged: (TextFieldValue) -> Unit,
     selectedTags: List<String>,
     onTagRemoved: (String) -> Unit,
-    onSubmit: () -> Unit
+    onSubmit: () -> Unit,
+    onClear: () -> Unit
 ) {
     Text(
         text = "Search",
         color = Color.White,
-        fontSize = 28.sp,
+        fontSize = 22.sp,
         fontWeight = FontWeight.Bold,
-        modifier = Modifier.padding(top = 24.dp, bottom = 12.dp)
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 20.dp, bottom = 12.dp)
     )
     TagSearchField(
         query = query,
         onQueryChanged = onQueryChanged,
         selectedTags = selectedTags,
         onTagRemoved = onTagRemoved,
-        onSubmit = onSubmit
+        onSubmit = onSubmit,
+        onClear = onClear
     )
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 private fun TagSearchField(
-    query: String,
-    onQueryChanged: (String) -> Unit,
+    query: TextFieldValue,
+    onQueryChanged: (TextFieldValue) -> Unit,
     selectedTags: List<String>,
     onTagRemoved: (String) -> Unit,
-    onSubmit: () -> Unit
+    onSubmit: () -> Unit,
+    onClear: () -> Unit
 ) {
-    Row(verticalAlignment = Alignment.Top, modifier = Modifier.fillMaxWidth()) {
+    val focusRequester = remember { FocusRequester() }
+    val tagScrollState = androidx.compose.foundation.rememberScrollState()
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var boxMenuOpen by remember { mutableStateOf(false) }
+
+    // Local text state so typing is instant and the field NEVER loses focus to a
+    // ViewModel round-trip (the "drops after 1-2 letters" bug). In the normal case
+    // the VM just echoes our value back, so they stay equal. They differ only when
+    // the VM transforms the text (e.g. a comma committed a tag and reset the field
+    // to the remainder) — in that case we sync the VM's value down. Done in an
+    // effect (not raw composition) to avoid any recomposition churn.
+    var localValue by remember { mutableStateOf(query) }
+    androidx.compose.runtime.LaunchedEffect(query.text) {
+        if (query.text != localValue.text) {
+            localValue = query
+        }
+    }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth()
+    ) {
         Box(
             modifier = Modifier
                 .weight(1f)
-                .background(Color(0xFF121315), RoundedCornerShape(20.dp))
-                .padding(horizontal = 12.dp, vertical = 10.dp)
+                .border(1.dp, Color(0xFF8A8D91), RoundedCornerShape(16.dp))
+                .combinedClickable(
+                    onClick = { focusRequester.requestFocus() },
+                    onLongClick = { if (selectedTags.isNotEmpty()) boxMenuOpen = true }
+                )
+                .padding(horizontal = 14.dp, vertical = 10.dp)
         ) {
-            FlowRow(
-                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
-                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp)
+            // Long-press on empty space → copy all selected tags.
+            androidx.compose.material3.DropdownMenu(
+                expanded = boxMenuOpen,
+                onDismissRequest = { boxMenuOpen = false }
             ) {
-                selectedTags.forEach { tag ->
-                    TagPill(tag = tag, onRemove = { onTagRemoved(tag) })
-                }
-
-                BasicTextField(
-                    value = query,
-                    onValueChange = onQueryChanged,
-                    singleLine = true,
-                    textStyle = TextStyle(color = Color.White, fontSize = 15.sp),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    cursorBrush = SolidColor(Color.White),
-                    decorationBox = { innerTextField ->
-                        if (query.isEmpty() && selectedTags.isEmpty()) {
-                            Text("Search for tags: car, model, jacket", color = Color(0xFF6B6E72), fontSize = 15.sp)
-                        }
-                        innerTextField()
-                    },
-                    modifier = Modifier.padding(vertical = 4.dp).widthIn(min = 40.dp)
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text("Select all (copy ${selectedTags.size} tags)") },
+                    onClick = {
+                        clipboard.setText(androidx.compose.ui.text.AnnotatedString(selectedTags.joinToString(" ")))
+                        android.widget.Toast.makeText(context, "Copied ${selectedTags.size} tags", android.widget.Toast.LENGTH_SHORT).show()
+                        boxMenuOpen = false
+                    }
                 )
             }
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                // Pills AND the text field live in one FlowRow, so the cursor sits
+                // right after the last pill on the same line and only wraps when the
+                // row actually runs out of width — no premature new line.
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 96.dp)
+                        .verticalScroll(tagScrollState)
+                ) {
+                    selectedTags.forEach { tag ->
+                        TagPill(tag = tag, allTags = selectedTags, onRemove = { onTagRemoved(tag) })
+                    }
+
+                    BasicTextField(
+                        value = localValue,
+                        onValueChange = { newValue ->
+                            localValue = newValue          // instant, keeps focus
+                            onQueryChanged(newValue)       // notify VM for suggestions/commits
+                        },
+                        singleLine = true,
+                        textStyle = TextStyle(color = Color.White, fontSize = 15.sp),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(onSearch = { onSubmit() }),
+                        cursorBrush = SolidColor(Color.White),
+                        decorationBox = { innerTextField ->
+                            if (localValue.text.isEmpty() && selectedTags.isEmpty()) {
+                                Text("eg. naruto_uzumaki, use comma to separate tags", color = Color(0xFF6B6E72), fontSize = 15.sp)
+                            }
+                            innerTextField()
+                        },
+                        modifier = Modifier
+                            .widthIn(min = 60.dp)
+                            .focusRequester(focusRequester)
+                            .padding(vertical = 4.dp)
+                    )
+                }
+            }
+
+            // Clear (×) pinned to the box's vertical center and right edge, so it
+            // lines up with the circular arrow. Always visible.
+            Icon(
+                imageVector = Icons.Filled.Close,
+                contentDescription = "Clear search",
+                tint = Color(0xFF8A8D91),
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .size(20.dp)
+                    .clickable { onClear() }
+            )
         }
 
-        IconButton(onClick = onSubmit, modifier = Modifier.padding(start = 8.dp).size(48.dp)) {
+        // Fixed-size circular arrow, vertically centered next to the bar.
+        Box(
+            modifier = Modifier
+                .padding(start = 10.dp)
+                .size(56.dp)
+                .border(1.dp, Color(0xFF8A8D91), androidx.compose.foundation.shape.CircleShape)
+                .clickable {
+                    onSubmit()
+                    focusRequester.requestFocus()
+                },
+            contentAlignment = Alignment.Center
+        ) {
             Icon(
                 imageVector = Icons.Filled.ArrowForward,
                 contentDescription = "Search",
                 tint = Color.White,
-                modifier = Modifier.size(40.dp).padding(4.dp)
+                modifier = Modifier.size(22.dp)
             )
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun TagPill(tag: String, onRemove: () -> Unit) {
-    val color = colorForTagHash(tag)
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.background(color.copy(alpha = 0.25f), RoundedCornerShape(50)).padding(horizontal = 10.dp, vertical = 6.dp)
-    ) {
-        Text(text = tag.replace('_', ' '), color = color, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-        Icon(
-            imageVector = Icons.Filled.Close,
-            contentDescription = "Remove $tag",
-            tint = color,
-            modifier = Modifier.padding(start = 4.dp).size(14.dp).clickable { onRemove() }
-        )
+private fun TagPill(tag: String, allTags: List<String>, onRemove: () -> Unit) {
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var menuOpen by remember { mutableStateOf(false) }
+
+    Box {
+        // Solid purple pill with white text. Long-press opens a Copy / Select all menu.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .background(
+                    com.example.mediabrowser.ui.theme.SelectedTagPurple,
+                    RoundedCornerShape(50)
+                )
+                .combinedClickable(
+                    onClick = {},
+                    onLongClick = { menuOpen = true }
+                )
+                .padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 6.dp)
+        ) {
+            Text(text = tag, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Icon(
+                imageVector = Icons.Filled.Close,
+                contentDescription = "Remove $tag",
+                tint = Color.White,
+                modifier = Modifier.padding(start = 6.dp).size(14.dp).clickable { onRemove() }
+            )
+        }
+
+        androidx.compose.material3.DropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false }
+        ) {
+            androidx.compose.material3.DropdownMenuItem(
+                text = { Text("Copy \"$tag\"") },
+                onClick = {
+                    clipboard.setText(androidx.compose.ui.text.AnnotatedString(tag))
+                    android.widget.Toast.makeText(context, "Copied: $tag", android.widget.Toast.LENGTH_SHORT).show()
+                    menuOpen = false
+                }
+            )
+            androidx.compose.material3.DropdownMenuItem(
+                text = { Text("Select all") },
+                onClick = {
+                    val joined = allTags.joinToString(" ")
+                    clipboard.setText(androidx.compose.ui.text.AnnotatedString(joined))
+                    android.widget.Toast.makeText(context, "Copied ${allTags.size} tags", android.widget.Toast.LENGTH_SHORT).show()
+                    menuOpen = false
+                }
+            )
+        }
     }
 }
 
@@ -254,6 +418,7 @@ private fun colorForTagHash(tag: String): Color {
     return palette[index]
 }
 
+
 @Composable
 private fun TagSuggestionsList(
     suggestions: List<TagSuggestion>,
@@ -261,16 +426,33 @@ private fun TagSuggestionsList(
 ) {
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         items(suggestions, key = { it.name }) { suggestion ->
-            ListItem(
-                headlineContent = { Text(suggestion.displayName, color = Color.White) },
-                supportingContent = { Text("${suggestion.postCount} posts", color = Color(0xFF8A8D91)) },
-                modifier = Modifier.fillMaxWidth().clickable { onTagSelected(suggestion) }.padding(horizontal = 4.dp)
-            )
-            Divider(color = Color(0xFF2A2D2F))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onTagSelected(suggestion) }
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
+            ) {
+                Text(
+                    text = suggestion.displayName,
+                    // Primary results (from the r34.app-style autocomplete) are
+                    // highlighted in the PDF's exact orange; supplementary
+                    // prefix-matches stay white.
+                    color = if (suggestion.isPrimary)
+                        com.example.mediabrowser.ui.theme.SuggestionPrimaryOrange
+                    else Color.White,
+                    fontSize = 14.sp
+                )
+                Text(
+                    text = "${suggestion.postCount} posts",
+                    color = Color(0xFF8A8D91),
+                    fontSize = 12.sp
+                )
+            }
         }
     }
 }
-
 @Composable
 private fun SearchHint() {
     Box(modifier = Modifier.fillMaxSize()) {

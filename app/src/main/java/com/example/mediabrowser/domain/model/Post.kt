@@ -9,6 +9,7 @@ data class Post(
     val id: Long,
     val thumbnailUrl: String,
     val previewUrl: String,
+    val sampleUrl: String,
     val fileUrl: String,
     val fileType: MediaType,
     val width: Int,

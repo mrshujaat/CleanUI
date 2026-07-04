@@ -50,6 +50,17 @@ sealed class Destination(val route: String) {
     }
 
     data object ArtistPage : Destination("artist_page")
+    data object CategoryDetail : Destination("category_detail")
+
+    /**
+     * A single favourites sub-section (Characters / Series / Tags / Artists /
+     * My Poison), opened from the Favourites landing list. The section is passed
+     * as a route argument.
+     */
+    data object FavoriteSection : Destination("favorite_section/{section}") {
+        fun createRoute(section: String) = "favorite_section/$section"
+        const val ARG = "section"
+    }
 }
 
 interface BottomNavDestination {

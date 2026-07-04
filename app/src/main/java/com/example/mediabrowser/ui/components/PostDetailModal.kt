@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -28,8 +29,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -38,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.paging.compose.collectAsLazyPagingItems
+import com.example.mediabrowser.domain.model.ArtistProfile
 import com.example.mediabrowser.domain.model.LayoutStyle
 import com.example.mediabrowser.domain.model.PostDetail
 import com.example.mediabrowser.domain.model.TagCategory
@@ -48,21 +54,28 @@ import com.example.mediabrowser.domain.model.TagInfo
 fun DetailPageStandalone(
     detail: PostDetail,
     onDismiss: () -> Unit,
+    onNavigateToArtist: (ArtistProfile) -> Unit,
     viewModel: DetailPageViewModel = hiltViewModel()
 ) {
-    val searchTags by viewModel.searchTags.collectAsState()
     val isSearchActive by viewModel.isSearchActive.collectAsState()
-    val results = viewModel.searchResults.collectAsLazyPagingItems()
+    val navigateToArtist by viewModel.navigateToArtist.collectAsState()
+
+    LaunchedEffect(navigateToArtist) {
+        navigateToArtist?.let { profile ->
+            onNavigateToArtist(profile)
+            viewModel.clearArtistNavigation()
+        }
+    }
 
     val onTagAction: (String, TagCategory, TagModalAction) -> Unit = { name, category, action ->
         when (action) {
-            TagModalAction.OPEN_IN_NEW_TAB -> viewModel.openTagInline(name)
+            TagModalAction.OPEN_IN_NEW_TAB -> viewModel.openTagInline(name, category)
             TagModalAction.ADD_TO_SEARCH -> viewModel.addTag(name)
             TagModalAction.TOGGLE_FAVORITE -> viewModel.toggleTagOrArtistFavorite(name, category)
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize().background(Color(0xFF0B0C0E))) {
+    Column(modifier = Modifier.fillMaxSize().background(Color(0xFF000000))) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.End
@@ -72,88 +85,203 @@ fun DetailPageStandalone(
             }
         }
 
-        InlineSearchBar(
-            searchTags = searchTags,
-            onTagRemoved = viewModel::removeTag,
-            onSubmit = viewModel::submitSearch
-        )
-
         if (isSearchActive) {
-            PagedPostGrid(
-                items = results,
-                columns = 2,
-                cornerRadiusDp = 16,
-                layoutStyle = LayoutStyle.MASONRY,
-                onPostClick = { },
-                onToggleFavorite = { post -> viewModel.toggleFavorite(post) },
-                emptyContent = {
-                    Text("No results found.", color = Color(0xFF8A8D91), modifier = Modifier.padding(24.dp))
-                },
-                modifier = Modifier.weight(1f)
-            )
+            FeedInlineSearchBody(viewModel = viewModel, onNavigateToArtist = onNavigateToArtist)
         } else {
             LazyColumn(modifier = Modifier.weight(1f)) {
-                item { SectionLabel("Artist") }
-                item { ArtistOrPlaceholder(detail = detail, onTagAction = onTagAction) }
-                item { SectionLabel("Copyright") }
-                item {
-                    TagSectionOrPlaceholder(
-                        tags = detail.tags.filter { it.category == TagCategory.COPYRIGHT },
-                        emptyText = "No copyright tags",
-                        onTagAction = onTagAction
-                    )
-                }
-                item { SectionLabel("Tags") }
-                item {
-                    TagSectionOrPlaceholder(
-                        tags = detail.tags.filter { it.category == TagCategory.GENERAL || it.category == TagCategory.CHARACTER },
-                        emptyText = "No tags",
-                        onTagAction = onTagAction
-                    )
-                }
-                item { SectionLabel("Meta") }
-                item {
-                    TagSectionOrPlaceholder(
-                        tags = detail.tags.filter { it.category == TagCategory.META },
-                        emptyText = "No meta tags",
-                        onTagAction = onTagAction
-                    )
-                }
-                detail.source?.let { source ->
-                    item {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 16.dp).padding(top = 16.dp)
-                        ) {
-                            Text(text = "Source: ", color = Color(0xFF8A8D91), style = MaterialTheme.typography.bodyMedium)
-                            AssistChip(
-                                onClick = { },
-                                label = { Text(source, maxLines = 1) },
-                                leadingIcon = { Icon(Icons.Filled.OpenInNew, contentDescription = null) }
-                            )
-                        }
-                    }
-                }
-                item { Spacer(modifier = Modifier.height(16.dp)) }
+                item { DetailSections(detail = detail, onTagAction = onTagAction) }
             }
-        }
 
-        Divider(color = Color(0xFF2A2D2F))
-        TextButton(
-            onClick = { viewModel.reset(); onDismiss() },
-            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-        ) {
-            Text("DISMISS", color = Color.White)
+            Divider(color = Color(0xFF2A2D2F))
+            // DISMISS right-aligned, matching the PDF.
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = { viewModel.reset(); onDismiss() }) {
+                    Text("DISMISS", color = Color.White, fontSize = 16.sp)
+                }
+            }
         }
     }
 }
 
-// ... (Keep the rest of the private helper functions like InlineSearchBar, SearchTagPill, etc. unchanged)
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun InlineDetailContent(
+    detail: PostDetail,
+    onTagAction: (String, TagCategory, TagModalAction) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF000000))
+    ) {
+        DetailSections(detail = detail, onTagAction = onTagAction)
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun FeedInlineSearchBody(
+    viewModel: DetailPageViewModel,
+    onNavigateToArtist: (ArtistProfile) -> Unit
+) {
+    val searchTags by viewModel.searchTags.collectAsState()
+    val queryText by viewModel.queryText.collectAsState()
+    val settings by viewModel.settings.collectAsState()
+    val results = viewModel.searchResults.collectAsLazyPagingItems()
+
+    var openResultIndex by remember { mutableStateOf<Int?>(null) }
+
+    InlineSearchBar(
+        searchTags = searchTags,
+        queryText = queryText,
+        onQueryChanged = viewModel::onQueryChanged,
+        onTagRemoved = viewModel::removeTag,
+        onSubmit = viewModel::submitSearch
+    )
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        PagedPostGrid(
+            items = results,
+            columns = settings.gridColumns.coerceIn(1, 4),
+            cornerRadiusDp = settings.cardCornerRadiusDp,
+            layoutStyle = settings.homeLayoutStyle,
+            onPostClick = { post ->
+                val index = results.itemSnapshotList.indexOfFirst { it?.id == post.id }.coerceAtLeast(0)
+                openResultIndex = index
+            },
+            onToggleFavorite = { post -> viewModel.toggleFavorite(post) },
+            emptyContent = {
+                Text("No results found.", color = Color(0xFF8A8D91), modifier = Modifier.padding(24.dp))
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+
+        openResultIndex?.let { index ->
+            FeedScreenContent(
+                startIndex = index,
+                items = results,
+                onDismiss = { openResultIndex = null },
+                onToggleFavorite = { post -> viewModel.toggleFavorite(post) },
+                onDownload = { post -> viewModel.downloadPost(post) },
+                getPostDetail = { post -> viewModel.getPostDetail(post) },
+                onNavigateToArtist = onNavigateToArtist,
+                detailViewModel = viewModel,
+                showFloatingSearchBar = false,
+                forceShowFeed = true
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DetailSections(
+    detail: PostDetail,
+    onTagAction: (String, TagCategory, TagModalAction) -> Unit
+) {
+    Column {
+        val artistTags = detail.tags.filter { it.category == TagCategory.ARTIST }
+        if (artistTags.isNotEmpty()) {
+            SectionLabel(if (artistTags.size > 1) "Artists" else "Artist")
+            TagSectionOrPlaceholder(tags = artistTags, emptyText = "", onTagAction = onTagAction)
+        }
+
+        val characterTags = detail.tags.filter { it.category == TagCategory.CHARACTER }
+        if (characterTags.isNotEmpty()) {
+            SectionLabel("Character")
+            TagSectionOrPlaceholder(tags = characterTags, emptyText = "", onTagAction = onTagAction)
+        }
+
+        val copyrightTags = detail.tags.filter { it.category == TagCategory.COPYRIGHT }
+        if (copyrightTags.isNotEmpty()) {
+            SectionLabel("Series")
+            TagSectionOrPlaceholder(tags = copyrightTags, emptyText = "", onTagAction = onTagAction)
+        }
+
+        val generalTags = detail.tags.filter { it.category == TagCategory.GENERAL }
+        if (generalTags.isNotEmpty()) {
+            SectionLabel("Tags")
+            TagSectionOrPlaceholder(tags = generalTags, emptyText = "", onTagAction = onTagAction)
+        }
+
+        val metaTags = detail.tags.filter { it.category == TagCategory.META }
+        if (metaTags.isNotEmpty()) {
+            SectionLabel("Meta")
+            TagSectionOrPlaceholder(tags = metaTags, emptyText = "", onTagAction = onTagAction)
+        }
+
+        detail.source?.let { source ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(horizontal = 16.dp).padding(top = 16.dp)
+            ) {
+                Text(text = "Source: ", color = Color(0xFF8A8D91), style = MaterialTheme.typography.bodyMedium)
+                AssistChip(
+                    onClick = { },
+                    label = { Text(source, maxLines = 1) },
+                    leadingIcon = { Icon(Icons.Filled.OpenInNew, contentDescription = null) }
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun FloatingSearchPillBar(
+    searchTags: List<String>,
+    onTagRemoved: (String) -> Unit,
+    onSubmit: () -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.Top,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .background(Color(0xFF1A1D1F).copy(alpha = 0.95f), RoundedCornerShape(20.dp))
+                .padding(horizontal = 12.dp, vertical = 10.dp)
+        ) {
+            FlowRow(
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                searchTags.forEach { tag ->
+                    SearchTagPill(tag = tag, onRemove = { onTagRemoved(tag) })
+                }
+            }
+        }
+
+        IconButton(
+            onClick = onSubmit,
+            modifier = Modifier
+                .padding(start = 8.dp)
+                .size(48.dp)
+                .background(Color(0xFF1A1D1F).copy(alpha = 0.95f), RoundedCornerShape(50))
+        ) {
+            Icon(
+                imageVector = Icons.Filled.ArrowForward,
+                contentDescription = "Search",
+                tint = Color.White,
+                modifier = Modifier.size(24.dp)
+            )
+        }
+    }
+}
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun InlineSearchBar(
     searchTags: List<String>,
+    queryText: androidx.compose.ui.text.input.TextFieldValue,
+    onQueryChanged: (androidx.compose.ui.text.input.TextFieldValue) -> Unit,
     onTagRemoved: (String) -> Unit,
     onSubmit: () -> Unit
 ) {
@@ -171,17 +299,33 @@ private fun InlineSearchBar(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                if (searchTags.isEmpty()) {
-                    Text(
-                        "Tap a tag below to add it here",
-                        color = Color(0xFF6B6E72),
-                        fontSize = 14.sp,
-                        modifier = Modifier.padding(vertical = 4.dp)
-                    )
-                }
                 searchTags.forEach { tag ->
                     SearchTagPill(tag = tag, onRemove = { onTagRemoved(tag) })
                 }
+
+                androidx.compose.foundation.text.BasicTextField(
+                    value = queryText,
+                    onValueChange = onQueryChanged,
+                    singleLine = true,
+                    textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Search
+                    ),
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(Color.White),
+                    decorationBox = { innerTextField ->
+                        if (queryText.text.isEmpty() && searchTags.isEmpty()) {
+                            Text(
+                                "Add more tags...",
+                                color = Color(0xFF6B6E72),
+                                fontSize = 14.sp
+                            )
+                        }
+                        innerTextField()
+                    },
+                    modifier = Modifier
+                        .padding(vertical = 4.dp)
+                        .widthIn(min = 40.dp)
+                )
             }
         }
 

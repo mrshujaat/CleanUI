@@ -17,6 +17,6 @@ data class ArchivePostDto(
     @SerialName("height") val height: Int,
     @SerialName("score") val score: Int,
     @SerialName("tags") val tags: String,
-    @SerialName("directory") val directory: String? = null,
+    @SerialName("directory") val directory: Int? = null,
     @SerialName("image") val image: String? = null
 )

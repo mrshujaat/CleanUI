@@ -11,7 +11,6 @@ import androidx.compose.material.icons.filled.Copyright
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Sell
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -23,10 +22,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.mediabrowser.domain.model.TagCategory
+import com.example.mediabrowser.ui.theme.TagArtistDefault
+import com.example.mediabrowser.ui.theme.TagCharacterDefault
+import com.example.mediabrowser.ui.theme.TagCopyrightDefault
+import com.example.mediabrowser.ui.theme.TagGeneralDefault
+import com.example.mediabrowser.ui.theme.TagMetaDefault
 
 /**
- * Fully rounded, flat-colored tag pill with a small category icon plus
- * white text, sized for readability (16sp, semi-bold, generous padding).
+ * Solid-fill pill matching the redesign PDF: a fully-saturated category color
+ * background with white text, fully rounded. No icon (the PDF pills are clean
+ * solid pills). Colors come straight from the PDF-matched palette in Color.kt.
  */
 @Composable
 fun TagChip(
@@ -35,43 +40,63 @@ fun TagChip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val color = colorForCategory(category)
+    val fill = backgroundColorForCategory(category)
     val pillShape = RoundedCornerShape(50)
+    // White text on dark fills, near-black on light fills (e.g. the yellow
+    // artist pill), matching the PDF and keeping text readable.
+    val textColor = if (isLightColor(fill)) Color(0xFF111111) else Color.White
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        // FIXED: Re-ordered modifiers to clip the touch ripples cleanly to the rounded background
-        // and expand the active hit box across the entire padding boundary.
         modifier = modifier
-            .padding(end = 10.dp, bottom = 10.dp) // 1. Outer margins
-            .clip(pillShape)                      // 2. Bound interaction ripples
-            .background(color, pillShape)         // 3. Render color fill
-            .clickable(onClick = onClick)         // 4. Capture touch events fully
-            .padding(horizontal = 18.dp, vertical = 12.dp) // 5. Safe inner text spacing
+            .padding(end = 8.dp, bottom = 8.dp)
+            .clip(pillShape)
+            .background(fill, pillShape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 7.dp)
     ) {
-        Icon(
-            imageVector = iconForCategory(category),
-            contentDescription = null,
-            tint = Color.White,
-            modifier = Modifier.padding(end = 8.dp)
-        )
         Text(
             text = label,
-            color = Color.White,
-            fontSize = 16.sp,
+            color = textColor,
+            fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold
         )
     }
 }
 
-@Composable
-fun colorForCategory(category: TagCategory): Color = when (category) {
-    TagCategory.ARTIST -> Color(0xFF5C7DB8)      // muted blue
-    TagCategory.CHARACTER -> Color(0xFF6FA37A)   // muted green
-    TagCategory.COPYRIGHT -> Color(0xFF8E6FB5)   // muted purple
-    TagCategory.META -> Color(0xFFB57550)        // muted orange/brown
-    TagCategory.GENERAL -> Color(0xFF3D4654)     // muted slate gray
+/** Relative luminance check — true if a color is light enough to need dark text. */
+fun isLightColor(color: Color): Boolean {
+    val luminance = 0.299 * color.red + 0.587 * color.green + 0.114 * color.blue
+    return luminance > 0.6
 }
+
+/**
+ * Text/foreground color. With solid pills the text is white, but some callers
+ * use this for non-pill contexts (e.g. colored section labels), so it returns
+ * the category's vivid color.
+ */
+@Composable
+fun foregroundColorForCategory(category: TagCategory): Color = when (category) {
+    TagCategory.ARTIST -> TagArtistDefault
+    TagCategory.CHARACTER -> TagCharacterDefault
+    TagCategory.COPYRIGHT -> TagCopyrightDefault
+    TagCategory.META -> TagMetaDefault
+    TagCategory.GENERAL -> TagGeneralDefault
+}
+
+/** Solid pill fill — the exact PDF category colors. */
+@Composable
+fun backgroundColorForCategory(category: TagCategory): Color = when (category) {
+    TagCategory.ARTIST -> TagArtistDefault
+    TagCategory.CHARACTER -> TagCharacterDefault
+    TagCategory.COPYRIGHT -> TagCopyrightDefault
+    TagCategory.META -> TagMetaDefault
+    TagCategory.GENERAL -> TagGeneralDefault
+}
+
+/** Kept for backward compatibility with any call sites using a single solid color. */
+@Composable
+fun colorForCategory(category: TagCategory): Color = backgroundColorForCategory(category)
 
 fun iconForCategory(category: TagCategory): ImageVector = when (category) {
     TagCategory.ARTIST -> Icons.Filled.Edit

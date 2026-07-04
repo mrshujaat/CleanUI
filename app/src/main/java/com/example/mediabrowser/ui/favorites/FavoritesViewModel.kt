@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
+import androidx.paging.filter
 import com.example.mediabrowser.data.local.PreferencesDataStore
 import com.example.mediabrowser.data.repository.MediaRepository
 import com.example.mediabrowser.domain.model.AppSettings
@@ -11,6 +12,8 @@ import com.example.mediabrowser.domain.model.FavoriteArtist
 import com.example.mediabrowser.domain.model.FavoriteTag
 import com.example.mediabrowser.domain.model.Post
 import com.example.mediabrowser.domain.model.PostDetail
+import com.example.mediabrowser.domain.model.TagBatch
+import com.example.mediabrowser.domain.model.TagBatchSerializer
 import com.example.mediabrowser.domain.model.TagCategory
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -26,7 +29,21 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-enum class FavoritesTab { POSTS, TAGS, ARTISTS }
+enum class FavoritesTab { POSTS, TAGS, ARTISTS, BATCHES }
+
+/**
+ * The five favourites sub-sections shown on the landing list (matching the
+ * redesign). Characters/Series/Tags are favourite tags filtered by category;
+ * MY_POISON is the saved tag batches; ARTISTS is favourite artists.
+ */
+enum class FavoriteSection(val title: String, val subtitle: String) {
+    POSTS("Posts", "Images and videos you favourited"),
+    CHARACTERS("Characters", "Your saved favourite characters"),
+    SERIES("Series", "Series you liked"),
+    TAGS("Tags", "A collection of your favourite tags"),
+    MY_POISON("My Poision", "Your saved searches of tags"),
+    ARTISTS("Artist", "Artist that you like")
+}
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
@@ -37,6 +54,18 @@ class FavoritesViewModel @Inject constructor(
 
     val favoritePosts: Flow<PagingData<Post>> =
         repository.getFavoritesPaged().cachedIn(viewModelScope)
+
+    // Same favorites stream split by media type so the Posts tab can show
+    // Images and Videos separately. Each is independently cached.
+    val favoriteImages: Flow<PagingData<Post>> =
+        repository.getFavoritesPaged()
+            .map { paging -> paging.filter { it.fileType != com.example.mediabrowser.domain.model.MediaType.VIDEO } }
+            .cachedIn(viewModelScope)
+
+    val favoriteVideos: Flow<PagingData<Post>> =
+        repository.getFavoritesPaged()
+            .map { paging -> paging.filter { it.fileType == com.example.mediabrowser.domain.model.MediaType.VIDEO } }
+            .cachedIn(viewModelScope)
 
     val favoriteTags: StateFlow<List<FavoriteTag>> = repository.observeFavoriteTags()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -132,6 +161,57 @@ class FavoritesViewModel @Inject constructor(
         viewModelScope.launch {
             repository.toggleFavoriteArtist(artistName, artistName, 0)
         }
+    }
+
+    // --- Tag batches ("My Poison") ---
+
+    val tagBatches: StateFlow<List<TagBatch>> = repository.observeTagBatches()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Create a batch from an arbitrary tag list (used by "save from search"). */
+    fun createBatch(name: String, tags: List<String>) {
+        if (name.isBlank() || tags.isEmpty()) return
+        viewModelScope.launch { repository.createTagBatch(name, tags) }
+    }
+
+    /** Append tags to an existing batch (the "+ → Save changes" flow). */
+    fun addTagsToBatch(batch: TagBatch, newTags: List<String>) {
+        val merged = (batch.tags + newTags)
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+        viewModelScope.launch { repository.updateTagBatch(batch.id, batch.name, merged) }
+    }
+
+    fun renameBatch(batch: TagBatch, newName: String) {
+        if (newName.isBlank()) return
+        viewModelScope.launch { repository.updateTagBatch(batch.id, newName, batch.tags) }
+    }
+
+    fun removeTagFromBatch(batch: TagBatch, tag: String) {
+        viewModelScope.launch {
+            repository.updateTagBatch(batch.id, batch.name, batch.tags - tag)
+        }
+    }
+
+    fun deleteBatch(batch: TagBatch) {
+        viewModelScope.launch { repository.deleteTagBatch(batch.id) }
+    }
+
+    /** Run a search over all tags in a batch, reusing the Tags-tab feed machinery. */
+    fun searchBatch(batch: TagBatch) {
+        _searchTags.value = batch.tags
+        _isTagSearchActive.value = true
+    }
+
+    /** Serialize all batches to the export text format. */
+    fun exportBatchesText(): String = TagBatchSerializer.export(tagBatches.value)
+
+    /** Parse imported text and replace the current batch set. */
+    fun importBatchesText(text: String) {
+        val parsed = TagBatchSerializer.import(text)
+        if (parsed.isEmpty()) return
+        viewModelScope.launch { repository.replaceAllTagBatches(parsed) }
     }
 }
 

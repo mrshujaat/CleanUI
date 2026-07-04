@@ -1,32 +1,37 @@
 package com.example.mediabrowser.ui.settings
 
-import android.Manifest
-import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Divider
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,19 +39,25 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.mediabrowser.domain.model.DarkModeOption
+import com.example.mediabrowser.domain.model.ImageQuality
 import com.example.mediabrowser.domain.model.LayoutStyle
 import com.example.mediabrowser.ui.components.appBackgroundGradient
 import com.example.mediabrowser.ui.theme.parseHexColor
-import com.google.accompanist.permissions.ExperimentalPermissionsApi
-import com.google.accompanist.permissions.isGranted
-import com.google.accompanist.permissions.rememberPermissionState
 
-@OptIn(ExperimentalPermissionsApi::class)
+// Hardcoded donation link. Change this to your own URL.
+private const val DONATE_URL = "https://ko-fi.com/shujaatbabar"
+
+// Card background for the modal sheets (the grey box in the design).
+private val ModalSurface = Color(0xFF2A2B2E)
+private val SubtleText = Color(0xFF8A8D91)
+
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel()
@@ -54,21 +65,55 @@ fun SettingsScreen(
     val settings by viewModel.settings.collectAsState()
     val cacheSizeBytes by viewModel.cacheSizeBytes.collectAsState()
     val accentColor = parseHexColor(settings.accentColorHex, Color(0xFF2DD4BF))
-    
-    // Parse user custom surface color or fallback to a crisp semi-transparent dark shade
-    val surfaceColor = parseHexColor(settings.surfaceColorHex, Color(0x22FFFFFF))
 
-    var showDarkModeDialog by remember { mutableStateOf(false) }
+    var showAppearance by remember { mutableStateOf(false) }
+    var showOthers by remember { mutableStateOf(false) }
     var showClearCacheDialog by remember { mutableStateOf(false) }
-    var activeColorPicker by remember { mutableStateOf<ColorTarget?>(null) }
+    val uriHandler = LocalUriHandler.current
 
-    val notificationPermissionState = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        rememberPermissionState(Manifest.permission.POST_NOTIFICATIONS)
-    } else null
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val backupStatus by viewModel.backupStatus.collectAsState()
+
+    // Holds the JSON to write once the user has picked a destination file.
+    var pendingBackupJson by remember { mutableStateOf<String?>(null) }
+
+    val exportLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        val data = pendingBackupJson
+        if (uri != null && data != null) {
+            try {
+                context.contentResolver.openOutputStream(uri)?.use { out ->
+                    out.write(data.toByteArray())
+                }
+            } catch (_: Exception) { }
+        }
+        pendingBackupJson = null
+    }
+
+    val importLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val text = context.contentResolver.openInputStream(uri)
+                    ?.use { it.readBytes().decodeToString() } ?: ""
+                if (text.isNotBlank()) viewModel.importBackup(text)
+            } catch (_: Exception) { }
+        }
+    }
+
+    // Surface backup/restore results as a toast.
+    LaunchedEffect(backupStatus) {
+        backupStatus?.let {
+            android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_SHORT).show()
+            viewModel.clearBackupStatus()
+        }
+    }
 
     Scaffold(
         containerColor = Color.Transparent,
-        modifier = Modifier.appBackgroundGradient(accentColor)
+        modifier = Modifier.appBackgroundGradient(accentColor, MaterialTheme.colorScheme.background)
     ) { paddingValues ->
         Column(
             modifier = Modifier
@@ -79,284 +124,425 @@ fun SettingsScreen(
             Text(
                 text = "Settings",
                 color = Color.White,
-                fontSize = 24.sp,
+                fontSize = 22.sp,
                 fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp)
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp)
             )
 
-            SectionHeader("Appearance")
-            SettingsRow(
-                title = "Dark mode",
-                value = settings.darkMode.name.lowercase().replaceFirstChar { it.uppercase() },
-                surfaceColor = surfaceColor,
-                onClick = { showDarkModeDialog = true }
-            )
-            SettingsSliderRow(
-                title = "Grid columns",
-                value = settings.gridColumns,
-                range = 1f..4f,
-                onValueChange = { viewModel.setGridColumns(it) }
-            )
-            SettingsSliderRow(
-                title = "Card corner radius",
-                value = settings.cardCornerRadiusDp,
-                range = 0f..32f,
-                onValueChange = { viewModel.setCardCornerRadius(it) }
-            )
-            LayoutStyleRow(
-                title = "Home layout",
-                current = settings.homeLayoutStyle,
-                onSelect = viewModel::setHomeLayoutStyle
-            )
-            LayoutStyleRow(
-                title = "Favorites layout",
-                current = settings.favoritesLayoutStyle,
-                onSelect = viewModel::setFavoritesLayoutStyle
+            // Appearance → modal
+            NavRow(
+                title = "Appearance",
+                subtitle = "Change how content appears on the application",
+                onClick = { showAppearance = true }
             )
 
-            Divider(color = Color(0xFF2A2D2F))
-            SectionHeader("Theme Colors")
-            ColorRow("Accent color", settings.accentColorHex, surfaceColor) { activeColorPicker = ColorTarget.ACCENT }
-            ColorRow("Background color", settings.backgroundColorHex, surfaceColor) { activeColorPicker = ColorTarget.BACKGROUND }
-            ColorRow("Surface color", settings.surfaceColorHex, surfaceColor) { activeColorPicker = ColorTarget.SURFACE }
-            ColorRow("Artist tag color", settings.tagArtistColorHex, surfaceColor) { activeColorPicker = ColorTarget.TAG_ARTIST }
-            ColorRow("Character tag color", settings.tagCharacterColorHex, surfaceColor) { activeColorPicker = ColorTarget.TAG_CHARACTER }
-            ColorRow("Copyright tag color", settings.tagCopyrightColorHex, surfaceColor) { activeColorPicker = ColorTarget.TAG_COPYRIGHT }
-            ColorRow("Meta tag color", settings.tagMetaColorHex, surfaceColor) { activeColorPicker = ColorTarget.TAG_META }
-            ColorRow("General tag color", settings.tagGeneralColorHex, surfaceColor) { activeColorPicker = ColorTarget.TAG_GENERAL }
+            SectionSpacer()
 
-            Divider(color = Color(0xFF2A2D2F))
-            SectionHeader("Content")
-            SwitchRow("Safe search", settings.safeSearchEnabled, surfaceColor, viewModel::setSafeSearch)
-            SwitchRow("Data saver", settings.dataSaverEnabled, surfaceColor, viewModel::setDataSaver)
-            SwitchRow("Autoplay videos", settings.autoPlayVideos, surfaceColor, viewModel::setAutoPlayVideos)
+            // Image Quality (inline)
+            Text(
+                "Image Quality",
+                color = Color.White,
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Normal,
+                modifier = Modifier.padding(start = 20.dp, bottom = 12.dp)
+            )
+            Row(
+                modifier = Modifier.padding(start = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                ImageQuality.entries.forEach { quality ->
+                    QualityPill(
+                        label = quality.name.lowercase().replaceFirstChar { it.uppercase() },
+                        selected = settings.imageQuality == quality,
+                        accent = accentColor,
+                        onClick = { viewModel.setImageQuality(quality) }
+                    )
+                }
+            }
 
-            Divider(color = Color(0xFF2A2D2F))
-            SectionHeader("Downloads")
-            SwitchRow("Download over Wi-Fi only", settings.downloadOverWifiOnly, surfaceColor, viewModel::setWifiOnlyDownloads)
-            if (notificationPermissionState != null && !notificationPermissionState.status.isGranted) {
-                ListItem(
-                    headlineContent = { Text("Enable download notifications", color = Color.White) },
-                    supportingContent = {
-                        Text("Allow notifications to see download progress.", color = Color(0xFF8A8D91))
-                    },
-                    colors = ListItemDefaults.colors(containerColor = surfaceColor),
-                    modifier = Modifier.clickable { notificationPermissionState.launchPermissionRequest() }
+            SectionSpacer()
+
+            // Home Feed type (inline) — Default trending vs personalized Poison Feed
+            Text(
+                "Home Feed",
+                color = Color.White,
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Normal,
+                modifier = Modifier.padding(start = 20.dp, bottom = 4.dp)
+            )
+            Text(
+                "Poison learns from what you view, search, favourite & download",
+                color = Color(0xFF8A8D91),
+                fontSize = 13.sp,
+                modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 12.dp)
+            )
+            Row(
+                modifier = Modifier.padding(start = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                com.example.mediabrowser.domain.model.FeedType.entries.forEach { type ->
+                    QualityPill(
+                        label = if (type == com.example.mediabrowser.domain.model.FeedType.POISON) "Poison" else "Default",
+                        selected = settings.homeFeedType == type,
+                        accent = accentColor,
+                        onClick = { viewModel.setHomeFeedType(type) }
+                    )
+                }
+            }
+
+            SectionSpacer()
+
+            // Others → modal
+            NavRow(
+                title = "Others",
+                subtitle = "Notification, Content, Autoplay, etc",
+                onClick = { showOthers = true }
+            )
+
+            SectionSpacer()
+
+            // API information (inline)
+            Text(
+                "API information",
+                color = Color.White,
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Normal,
+                modifier = Modifier.padding(start = 20.dp, bottom = 12.dp)
+            )
+            ApiField(
+                label = "API KEY",
+                value = settings.apiCredentialOne,
+                onValueChange = { viewModel.setApiCredentialOne(it) }
+            )
+            Spacer(Modifier.height(16.dp))
+            ApiField(
+                label = "User ID",
+                value = settings.apiCredentialTwo,
+                onValueChange = { viewModel.setApiCredentialTwo(it) }
+            )
+
+            SectionSpacer()
+
+            // Backup & Restore
+            Text(
+                "Backup & Restore",
+                color = Color.White,
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Normal,
+                modifier = Modifier.padding(start = 20.dp, bottom = 4.dp)
+            )
+            Text(
+                "Save your favourites, batches, tags, preferences & learned feed to a file you can restore after reinstalling",
+                color = SubtleText,
+                fontSize = 13.sp,
+                modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 12.dp)
+            )
+            Row(
+                modifier = Modifier.padding(start = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                QualityPill(
+                    label = "Export",
+                    selected = false,
+                    accent = accentColor,
+                    onClick = {
+                        viewModel.exportBackup { jsonText ->
+                            pendingBackupJson = jsonText
+                            exportLauncher.launch("mediabrowser_backup.json")
+                        }
+                    }
+                )
+                QualityPill(
+                    label = "Import",
+                    selected = false,
+                    accent = accentColor,
+                    onClick = {
+                        importLauncher.launch(arrayOf("application/json"))
+                    }
                 )
             }
 
-            Divider(color = Color(0xFF2A2D2F))
-            SectionHeader("Advanced API Configuration")
-            Text(
-                text = "Optional: point the app at a different provider. Leave blank to use the built-in default.",
-                color = Color(0xFF8A8D91),
-                fontSize = 12.sp,
-                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp)
-            )
-            ApiConfigField("Provider name", settings.apiProviderName, viewModel::setApiProviderName)
-            ApiConfigField("Base URL", settings.apiBaseUrl, viewModel::setApiBaseUrl)
-            ApiConfigField("API Key / Credential 1", settings.apiCredentialOne, viewModel::setApiCredentialOne, isSecret = true)
-            ApiConfigField("Client Secret / Credential 2 (optional)", settings.apiCredentialTwo, viewModel::setApiCredentialTwo, isSecret = true)
+            SectionSpacer()
 
-            Divider(color = Color(0xFF2A2D2F))
-            SectionHeader("Storage")
-            SettingsRow(
-                title = "Clear image cache",
-                value = formatBytes(cacheSizeBytes),
-                surfaceColor = surfaceColor,
-                onClick = { showClearCacheDialog = true }
-            )
+            // Clear Cache
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { showClearCacheDialog = true }
+                    .padding(horizontal = 20.dp, vertical = 8.dp)
+            ) {
+                Text("Clear Cache", color = Color.White, fontSize = 26.sp)
+                Text(formatBytes(cacheSizeBytes) + " used", color = SubtleText, fontSize = 14.sp)
+            }
 
-            Divider(color = Color(0xFF2A2D2F))
-            SectionHeader("About")
-            ListItem(
-                headlineContent = { Text("Media Browser", color = Color.White) },
-                supportingContent = { Text("v1.0", color = Color(0xFF8A8D91)) },
-                colors = ListItemDefaults.colors(containerColor = surfaceColor)
-            )
+            SectionSpacer()
+
+            // Donate
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { uriHandler.openUri(DONATE_URL) }
+                    .padding(horizontal = 20.dp, vertical = 8.dp)
+            ) {
+                Text("Donate", color = Color.White, fontSize = 26.sp)
+                Text("Please support to keep the App running.", color = SubtleText, fontSize = 14.sp)
+            }
+
+            Spacer(Modifier.height(40.dp))
         }
     }
 
-    if (showDarkModeDialog) {
-        DarkModeDialog(
-            current = settings.darkMode,
-            onSelect = { viewModel.setDarkMode(it); showDarkModeDialog = false },
-            onDismiss = { showDarkModeDialog = false }
+    if (showAppearance) {
+        AppearanceModal(
+            settings = settings,
+            accent = accentColor,
+            onDismiss = { showAppearance = false },
+            onGridColumns = { viewModel.setGridColumns(it) },
+            onCardCorners = { viewModel.setCardCornerRadius(it) },
+            onHomeLayout = { viewModel.setHomeLayoutStyle(it) },
+            onFavLayout = { viewModel.setFavoritesLayoutStyle(it) }
+        )
+    }
+
+    if (showOthers) {
+        OthersModal(
+            settings = settings,
+            accent = accentColor,
+            onDismiss = { showOthers = false },
+            onSafeSearch = { viewModel.setSafeSearch(it) },
+            onWifiOnly = { viewModel.setWifiOnlyDownloads(it) },
+            onNotifications = { viewModel.setNotificationsEnabled(it) },
+            onAutoplay = { viewModel.setAutoPlayVideos(it) }
         )
     }
 
     if (showClearCacheDialog) {
         AlertDialog(
             onDismissRequest = { showClearCacheDialog = false },
-            title = { Text("Clear image cache?") },
-            text = { Text("This removes cached thumbnails and previews. Downloaded files are not affected.") },
+            title = { Text("Clear cache?") },
+            text = { Text("This frees up ${formatBytes(cacheSizeBytes)} of cached images.") },
             confirmButton = {
-                TextButton(onClick = { viewModel.clearCache(); showClearCacheDialog = false }) { Text("Clear") }
+                TextButton(onClick = {
+                    viewModel.clearCache()
+                    showClearCacheDialog = false
+                }) { Text("Clear") }
             },
             dismissButton = {
                 TextButton(onClick = { showClearCacheDialog = false }) { Text("Cancel") }
             }
         )
     }
-
-    activeColorPicker?.let { target ->
-        val (title, currentHex, onApply) = colorTargetConfig(target, settings, viewModel)
-        ColorPickerDialog(
-            title = title,
-            currentHex = currentHex,
-            onColorSelected = onApply,
-            onDismiss = { activeColorPicker = null }
-        )
-    }
 }
 
-private enum class ColorTarget {
-    ACCENT, BACKGROUND, SURFACE, TAG_ARTIST, TAG_CHARACTER, TAG_COPYRIGHT, TAG_META, TAG_GENERAL
-}
-
-private fun colorTargetConfig(
-    target: ColorTarget,
-    settings: com.example.mediabrowser.domain.model.AppSettings,
-    viewModel: SettingsViewModel
-): Triple<String, String, (String) -> Unit> = when (target) {
-    ColorTarget.ACCENT -> Triple("Accent color", settings.accentColorHex, viewModel::setAccentColor)
-    ColorTarget.BACKGROUND -> Triple("Background color", settings.backgroundColorHex, viewModel::setBackgroundColor)
-    ColorTarget.SURFACE -> Triple("Surface color", settings.surfaceColorHex, viewModel::setSurfaceColor)
-    ColorTarget.TAG_ARTIST -> Triple("Artist tag color", settings.tagArtistColorHex, viewModel::setTagArtistColor)
-    ColorTarget.TAG_CHARACTER -> Triple("Character tag color", settings.tagCharacterColorHex, viewModel::setTagCharacterColor)
-    ColorTarget.TAG_COPYRIGHT -> Triple("Copyright tag color", settings.tagCopyrightColorHex, viewModel::setTagCopyrightColor)
-    ColorTarget.TAG_META -> Triple("Meta tag color", settings.tagMetaColorHex, viewModel::setTagMetaColor)
-    ColorTarget.TAG_GENERAL -> Triple("General tag color", settings.tagGeneralColorHex, viewModel::setTagGeneralColor)
-}
-
+/** A tappable landing row: big title, subtitle, chevron. */
 @Composable
-private fun SectionHeader(title: String) {
-    Text(
-        text = title,
-        color = Color(0xFF2DD4BF), // Fixed accent teal fallback color for clean structural hierarchy
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 16.sp,
-        modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp)
-    )
-}
-
-@Composable
-private fun SettingsRow(title: String, value: String, surfaceColor: Color, onClick: () -> Unit) {
-    ListItem(
-        headlineContent = { Text(title, color = Color.White) },
-        supportingContent = { Text(value, color = Color(0xFF8A8D91)) },
-        colors = ListItemDefaults.colors(containerColor = surfaceColor),
-        modifier = Modifier.clickable(onClick = onClick)
-    )
-}
-
-@Composable
-private fun SwitchRow(title: String, checked: Boolean, surfaceColor: Color, onCheckedChange: (Boolean) -> Unit) {
-    ListItem(
-        headlineContent = { Text(title, color = Color.White) },
-        trailingContent = { Switch(checked = checked, onCheckedChange = onCheckedChange) },
-        colors = ListItemDefaults.colors(containerColor = surfaceColor)
-    )
-}
-
-@Composable
-private fun SettingsSliderRow(title: String, value: Int, range: ClosedFloatingPointRange<Float>, onValueChange: (Int) -> Unit) {
-    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-        Text("$title: $value", color = Color.White, fontSize = 14.sp)
-        Slider(
-            value = value.toFloat(),
-            onValueChange = { onValueChange(it.toInt()) },
-            valueRange = range
-        )
-    }
-}
-
-@Composable
-private fun ColorRow(title: String, hex: String, surfaceColor: Color, onClick: () -> Unit) {
-    ListItem(
-        headlineContent = { Text(title, color = Color.White) },
-        trailingContent = {
-            androidx.compose.foundation.layout.Box(
-                modifier = Modifier
-                    .size(28.dp)
-                    .background(parseHexColor(hex, Color.Gray), CircleShape)
-            )
-        },
-        colors = ListItemDefaults.colors(containerColor = surfaceColor),
-        modifier = Modifier.clickable(onClick = onClick)
-    )
-}
-
-@Composable
-private fun LayoutStyleRow(title: String, current: LayoutStyle, onSelect: (LayoutStyle) -> Unit) {
-    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-        Text(title, color = Color.White, fontSize = 14.sp, modifier = Modifier.padding(bottom = 4.dp))
-        Row {
-            LayoutStyle.entries.forEach { style ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .padding(end = 16.dp)
-                        .clickable { onSelect(style) }
-                ) {
-                    RadioButton(selected = current == style, onClick = { onSelect(style) })
-                    Text(style.name.lowercase().replaceFirstChar { it.uppercase() }, color = Color.White)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ApiConfigField(
-    label: String,
-    value: String,
-    onValueChange: (String) -> Unit,
-    isSecret: Boolean = false
-) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = onValueChange,
-        label = { Text(label) },
-        singleLine = true,
-        visualTransformation = if (isSecret) {
-            androidx.compose.ui.text.input.PasswordVisualTransformation()
-        } else {
-            androidx.compose.ui.text.input.VisualTransformation.None
-        },
+private fun NavRow(title: String, subtitle: String, onClick: () -> Unit) {
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp)
-    )
+            .clickable { onClick() }
+            .padding(horizontal = 20.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, color = Color.White, fontSize = 26.sp)
+            Text(subtitle, color = SubtleText, fontSize = 14.sp)
+        }
+        Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = Color.White, modifier = Modifier.size(28.dp))
+    }
 }
 
 @Composable
-private fun DarkModeDialog(current: DarkModeOption, onSelect: (DarkModeOption) -> Unit, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Dark mode") },
-        text = {
-            Column {
-                DarkModeOption.entries.forEach { option ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onSelect(option) },
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        RadioButton(selected = option == current, onClick = { onSelect(option) })
-                        Text(option.name.lowercase().replaceFirstChar { it.uppercase() })
-                    }
-                }
+private fun SectionSpacer() {
+    Spacer(Modifier.height(28.dp))
+}
+
+/** Low/Medium/High pill. */
+@Composable
+private fun QualityPill(label: String, selected: Boolean, accent: Color, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .background(if (selected) accent else Color.White, RoundedCornerShape(10.dp))
+            .clickable { onClick() }
+            .padding(horizontal = 22.dp, vertical = 10.dp)
+    ) {
+        Text(label, color = Color(0xFF111111), fontSize = 18.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable
+private fun ApiField(label: String, value: String, onValueChange: (String) -> Unit) {
+    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+        Text(label, color = Color.White, fontSize = 14.sp, modifier = Modifier.padding(bottom = 6.dp))
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = true,
+            shape = RoundedCornerShape(14.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = Color.White,
+                unfocusedTextColor = Color.White,
+                focusedBorderColor = SubtleText,
+                unfocusedBorderColor = Color(0xFF3A3D42),
+                cursorColor = Color.White
+            ),
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+/** Appearance modal — the grey sheet from the design. */
+@Composable
+private fun AppearanceModal(
+    settings: com.example.mediabrowser.domain.model.AppSettings,
+    accent: Color,
+    onDismiss: () -> Unit,
+    onGridColumns: (Int) -> Unit,
+    onCardCorners: (Int) -> Unit,
+    onHomeLayout: (LayoutStyle) -> Unit,
+    onFavLayout: (LayoutStyle) -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(ModalSurface, RoundedCornerShape(20.dp))
+                .verticalScroll(rememberScrollState())
+                .padding(20.dp)
+        ) {
+            Text("Appearance", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 16.dp))
+
+            // Dark / Light (disabled)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                RadioDot(selected = true, accent = accent)
+                Text("Dark", color = Color.White, fontSize = 16.sp, modifier = Modifier.padding(start = 10.dp, end = 28.dp))
+                RadioDot(selected = false, accent = accent, enabled = false)
+                Text("Light (Disabled)", color = SubtleText, fontSize = 16.sp, modifier = Modifier.padding(start = 10.dp))
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Close") }
+
+            Spacer(Modifier.height(20.dp))
+            Text("Grid Columns = ${settings.gridColumns}", color = Color.White, fontSize = 16.sp)
+            Slider(
+                value = settings.gridColumns.toFloat(),
+                onValueChange = { onGridColumns(it.toInt()) },
+                valueRange = 1f..4f,
+                steps = 2,
+                colors = SliderDefaults.colors(thumbColor = accent, activeTrackColor = accent, inactiveTrackColor = Color(0xFF5A5D62))
+            )
+
+            Spacer(Modifier.height(8.dp))
+            Text("Card Corners = ${settings.cardCornerRadiusDp}", color = Color.White, fontSize = 16.sp)
+            Slider(
+                value = settings.cardCornerRadiusDp.toFloat(),
+                onValueChange = { onCardCorners(it.toInt()) },
+                valueRange = 0f..32f,
+                colors = SliderDefaults.colors(thumbColor = accent, activeTrackColor = accent, inactiveTrackColor = Color(0xFF5A5D62))
+            )
+
+            Spacer(Modifier.height(20.dp))
+            Text("Layout", color = Color.White, fontSize = 18.sp, modifier = Modifier.padding(bottom = 12.dp))
+            LayoutChoiceRow("Home", settings.homeLayoutStyle, accent, onHomeLayout)
+            Spacer(Modifier.height(10.dp))
+            LayoutChoiceRow("Favourites", settings.favoritesLayoutStyle, accent, onFavLayout)
+
+            Spacer(Modifier.height(20.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onDismiss) { Text("Done", color = accent) }
+            }
         }
+    }
+}
+
+@Composable
+private fun LayoutChoiceRow(label: String, current: LayoutStyle, accent: Color, onSelect: (LayoutStyle) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Text(label, color = Color.White, fontSize = 16.sp, modifier = Modifier.weight(1f))
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { onSelect(LayoutStyle.GRID) }) {
+            RadioDot(selected = current == LayoutStyle.GRID, accent = accent)
+            Text("Grid", color = Color.White, fontSize = 16.sp, modifier = Modifier.padding(start = 8.dp, end = 20.dp))
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { onSelect(LayoutStyle.MASONRY) }) {
+            RadioDot(selected = current == LayoutStyle.MASONRY, accent = accent)
+            Text("Masonry", color = Color.White, fontSize = 16.sp, modifier = Modifier.padding(start = 8.dp))
+        }
+    }
+}
+
+/** Others modal — ON/OFF toggles. */
+@Composable
+private fun OthersModal(
+    settings: com.example.mediabrowser.domain.model.AppSettings,
+    accent: Color,
+    onDismiss: () -> Unit,
+    onSafeSearch: (Boolean) -> Unit,
+    onWifiOnly: (Boolean) -> Unit,
+    onNotifications: (Boolean) -> Unit,
+    onAutoplay: (Boolean) -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(ModalSurface, RoundedCornerShape(20.dp))
+                .padding(20.dp)
+        ) {
+            Text("Others", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 16.dp))
+
+            OnOffRow("Safe Search", settings.safeSearchEnabled, accent, onSafeSearch)
+            OnOffRow("Download over WiFi", settings.downloadOverWifiOnly, accent, onWifiOnly)
+            OnOffRow("Notifications", settings.notificationsEnabled, accent, onNotifications)
+            OnOffRow("Autoplay Videos", settings.autoPlayVideos, accent, onAutoplay)
+
+            Spacer(Modifier.height(12.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onDismiss) { Text("Done", color = accent) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OnOffRow(label: String, enabled: Boolean, accent: Color, onChange: (Boolean) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)
+    ) {
+        Text(label, color = Color.White, fontSize = 16.sp, modifier = Modifier.weight(1f))
+        Text(
+            "ON",
+            color = if (enabled) accent else SubtleText,
+            fontSize = 16.sp,
+            fontWeight = if (enabled) FontWeight.Bold else FontWeight.Normal,
+            modifier = Modifier.clickable { onChange(true) }.padding(horizontal = 10.dp)
+        )
+        Text(
+            "OFF",
+            color = if (!enabled) accent else SubtleText,
+            fontSize = 16.sp,
+            fontWeight = if (!enabled) FontWeight.Bold else FontWeight.Normal,
+            modifier = Modifier.clickable { onChange(false) }.padding(horizontal = 10.dp)
+        )
+    }
+}
+
+/** Simple filled/hollow radio dot. */
+@Composable
+private fun RadioDot(selected: Boolean, accent: Color, enabled: Boolean = true) {
+    Box(
+        modifier = Modifier
+            .size(20.dp)
+            .background(
+                if (selected) accent else if (enabled) Color.White else Color(0xFF5A5D62),
+                androidx.compose.foundation.shape.CircleShape
+            )
     )
 }
 
 private fun formatBytes(bytes: Long): String {
+    if (bytes <= 0) return "0 MB"
     val mb = bytes / (1024.0 * 1024.0)
-    return if (mb >= 1.0) "%.1f MB used".format(mb) else "0 MB used"
+    return if (mb < 1024) "%.1f MB".format(mb) else "%.2f GB".format(mb / 1024)
 }
