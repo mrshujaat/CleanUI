@@ -86,8 +86,14 @@ object DatabaseModule {
         // fit in the memory cache. For opaque photos the quality difference is minimal.
         .bitmapConfig(android.graphics.Bitmap.Config.RGB_565)
         .crossfade(200)
-        // Temporary: log Coil's decoding so we can see whether the video frame
-        // decoder runs and why a thumbnail might fail. Remove once thumbnails work.
-        .logger(coil.util.DebugLogger())
+        // Speed knobs — the biggest levers on scroll-time responsiveness:
+        //  - dispatcher(Dispatchers.IO): more threads decoding in parallel
+        //  - fetcherDispatcher/decoderDispatcher: dedicated IO for network/decode
+        //  - allowHardware(true): hardware bitmaps skip CPU copy on draw
+        .dispatcher(kotlinx.coroutines.Dispatchers.IO)
+        .fetcherDispatcher(kotlinx.coroutines.Dispatchers.IO)
+        .decoderDispatcher(kotlinx.coroutines.Dispatchers.Default)
+        .allowHardware(true)
+        // Debug logger was leaking CPU on every decode; off for release feel.
         .build()
 }

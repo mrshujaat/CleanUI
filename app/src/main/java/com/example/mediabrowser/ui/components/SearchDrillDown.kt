@@ -140,7 +140,17 @@ fun PostDrillDown(
             onTagActionOverride = onTagAction
         )
 
-        if (pendingTags.isNotEmpty()) {
+        if (pendingTags.isNotEmpty() || true) {
+            var typed by remember(post.id) {
+                mutableStateOf(androidx.compose.ui.text.input.TextFieldValue(""))
+            }
+            fun commitTypedIfAny() {
+                val raw = typed.text.trim().replace(' ', '_')
+                if (raw.isNotEmpty() && raw !in pendingTags) {
+                    pendingTags = pendingTags + raw
+                }
+                typed = androidx.compose.ui.text.input.TextFieldValue("")
+            }
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -151,9 +161,22 @@ fun PostDrillDown(
                     searchTags = pendingTags,
                     onTagRemoved = { tag -> pendingTags = pendingTags - tag },
                     onSubmit = {
+                        commitTypedIfAny()
                         if (pendingTags.isNotEmpty()) {
                             viewModel.recordSearch(pendingTags)
                             childTags = pendingTags
+                        }
+                    },
+                    queryText = typed,
+                    onQueryChanged = { new ->
+                        // Space commits the current text as a tag (matching main search)
+                        val text = new.text
+                        if (text.endsWith(' ') && text.trim().isNotEmpty()) {
+                            val raw = text.trim().replace(' ', '_')
+                            if (raw !in pendingTags) pendingTags = pendingTags + raw
+                            typed = androidx.compose.ui.text.input.TextFieldValue("")
+                        } else {
+                            typed = new
                         }
                     }
                 )

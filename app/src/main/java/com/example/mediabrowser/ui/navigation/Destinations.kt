@@ -4,11 +4,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -31,8 +33,14 @@ sealed class Destination(val route: String) {
         override val unselectedIcon: ImageVector = Icons.Outlined.Search
     }
 
+    data object Videos : Destination("videos"), BottomNavDestination {
+        override val label = "Videos"
+        override val selectedIcon: ImageVector = Icons.Filled.PlayArrow
+        override val unselectedIcon: ImageVector = Icons.Outlined.PlayArrow
+    }
+
     data object Favorites : Destination("favorites"), BottomNavDestination {
-        override val label = "Favorites"
+        override val label = "Fav"
         override val selectedIcon: ImageVector = Icons.Filled.Favorite
         override val unselectedIcon: ImageVector = Icons.Outlined.FavoriteBorder
     }
@@ -72,6 +80,7 @@ interface BottomNavDestination {
 val bottomNavDestinations: List<Destination> = listOf(
     Destination.Home,
     Destination.Search,
+    Destination.Videos,
     Destination.Favorites,
     Destination.Downloads,
     Destination.Settings

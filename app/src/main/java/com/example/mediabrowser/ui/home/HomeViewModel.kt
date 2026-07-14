@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -46,17 +47,17 @@ class HomeViewModel @Inject constructor(
 
     // FIXED: Transformed the static stream into a reactive pipeline that can gracefully
     // re-fetch or clear cache bounds whenever a refresh event is triggered.
-    // Now also reacts to the Home feed-type setting: DEFAULT shows the trending feed,
-    // POISON shows the personalized recommendation feed. flatMapLatest tears down the
-    // old pager and stands up the new one when the toggle flips.
+    // Reacts to the Home feed-type setting (DEFAULT trending / POISON recommendations)
+    // AND to the selected booru site — switching sites in Settings tears down the old
+    // pager and stands up a fresh one against the new host, no restart needed.
     val trendingFeed: Flow<PagingData<Post>> =
         combine(
             refreshSignal.onStart { emit(Unit) },
             preferencesDataStore.settingsFlow
-                .map { it.homeFeedType }
+                .map { it.homeFeedType to it.apiProviderName }
                 .distinctUntilChanged()
-        ) { _, feedType -> feedType }
-            .flatMapLatest { feedType ->
+        ) { _, feedKey -> feedKey }
+            .flatMapLatest { (feedType, _) ->
                 when (feedType) {
                     com.example.mediabrowser.domain.model.FeedType.POISON -> repository.getPoisonFeedPaged()
                     else -> repository.getPostsPaged(tags = "")
@@ -75,6 +76,10 @@ class HomeViewModel @Inject constructor(
     private val _trendingPreview = MutableStateFlow<List<Post>>(emptyList())
     val trendingPreview: StateFlow<List<Post>> = _trendingPreview.asStateFlow()
 
+    /** Small, non-paged preview list for the "Videos" home row. */
+    private val _videosPreview = MutableStateFlow<List<Post>>(emptyList())
+    val videosPreview: StateFlow<List<Post>> = _videosPreview.asStateFlow()
+
     /** One representative thumbnail post per franchise tag, for the "Top Series" row. */
     private val _topSeriesCards = MutableStateFlow<List<TopSeriesCard>>(
         DEFAULT_TOP_SERIES.map { TopSeriesCard(category = it, thumbnail = null) }
@@ -86,7 +91,14 @@ class HomeViewModel @Inject constructor(
     val openFeedIndex: StateFlow<Int?> = _openFeedIndex.asStateFlow()
 
     init {
-        loadRowPreviews()
+        // (Re)load the preview rows on start AND whenever the site changes, so
+        // the "Others" experience shows that site's Top Charts / New rows.
+        viewModelScope.launch {
+            preferencesDataStore.settingsFlow
+                .map { it.apiProviderName }
+                .distinctUntilChanged()
+                .collect { loadRowPreviews() }
+        }
     }
 
     private fun loadRowPreviews() {
@@ -103,6 +115,18 @@ class HomeViewModel @Inject constructor(
             )
         }
         viewModelScope.launch {
+            _videosPreview.value = runCatching {
+                repository.getPostsFlat(tags = "video", limit = 10)
+                    .filter { it.fileType == com.example.mediabrowser.domain.model.MediaType.VIDEO }
+            }.getOrDefault(emptyList())
+        }
+        viewModelScope.launch {
+            // The Top Series row is Rule34-specific (hardcoded franchise tags) —
+            // it's hidden on other sites, so don't spend 9 requests fetching it.
+            val site = com.example.mediabrowser.domain.model.BooruSite.fromSettings(
+                preferencesDataStore.settingsFlow.first()
+            )
+            if (!site.isDefault) return@launch
             DEFAULT_TOP_SERIES.forEachIndexed { index, series ->
                 val thumbnail = repository.getTopPostForTag(series.tagName)
                 _topSeriesCards.value = _topSeriesCards.value.toMutableList().also {

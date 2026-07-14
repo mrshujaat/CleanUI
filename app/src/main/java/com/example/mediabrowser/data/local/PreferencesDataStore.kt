@@ -57,6 +57,7 @@ class PreferencesDataStore @Inject constructor(
         val API_BASE_URL = stringPreferencesKey("api_base_url")
         val API_CREDENTIAL_ONE = stringPreferencesKey("api_credential_one")
         val API_CREDENTIAL_TWO = stringPreferencesKey("api_credential_two")
+        val SITE_CREDENTIALS = stringPreferencesKey("site_credentials")
     }
 
     val settingsFlow: Flow<AppSettings> = context.dataStore.data.map { prefs ->
@@ -96,7 +97,8 @@ class PreferencesDataStore @Inject constructor(
             apiProviderName = prefs[Keys.API_PROVIDER_NAME] ?: "",
             apiBaseUrl = prefs[Keys.API_BASE_URL] ?: "",
             apiCredentialOne = prefs[Keys.API_CREDENTIAL_ONE] ?: "",
-            apiCredentialTwo = prefs[Keys.API_CREDENTIAL_TWO] ?: ""
+            apiCredentialTwo = prefs[Keys.API_CREDENTIAL_TWO] ?: "",
+            siteCredentials = prefs[Keys.SITE_CREDENTIALS] ?: ""
         )
     }
 
@@ -198,5 +200,9 @@ class PreferencesDataStore @Inject constructor(
 
     suspend fun setApiCredentialTwo(value: String) {
         context.dataStore.edit { it[Keys.API_CREDENTIAL_TWO] = value }
+    }
+
+    suspend fun setSiteCredentials(json: String) {
+        context.dataStore.edit { it[Keys.SITE_CREDENTIALS] = json }
     }
 }

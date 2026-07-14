@@ -8,6 +8,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -41,12 +42,52 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideOkHttpClient(
-        logging: HttpLoggingInterceptor
+        logging: HttpLoggingInterceptor,
+        hostProvider: com.example.mediabrowser.data.remote.ApiHostProvider
     ): OkHttpClient =
         OkHttpClient.Builder()
             .addInterceptor(logging)
             .addInterceptor { chain ->
-                val original = chain.request()
+                var request = chain.request()
+
+                // Multi-site support: Retrofit is built against Rule34's API host;
+                // when another booru is selected in Settings, rewrite the host on
+                // DAPI calls (index.php). Scoped to the api.rule34.xxx host so
+                // image/CDN requests are never touched.
+                val site = hostProvider.currentSite()
+                if (!site.isDefault && request.url.host == "api.rule34.xxx") {
+                    val base = site.apiBaseUrl.toHttpUrlOrNull()
+                    if (base != null) {
+                        request = request.newBuilder()
+                            .url(
+                                request.url.newBuilder()
+                                    .scheme(base.scheme)
+                                    .host(base.host)
+                                    .port(base.port)
+                                    .build()
+                            )
+                            .build()
+                    }
+                }
+
+                // Per-site credentials: override any api_key/user_id query params
+                // with the pair stored for the CURRENT site, so the caller doesn't
+                // have to know which site is active. Empty → strip the param so we
+                // don't send Site A's key to Site B.
+                run {
+                    val cred = hostProvider.currentCredential()
+                    val url = request.url
+                    if (url.queryParameter("api_key") != null || url.queryParameter("user_id") != null || !cred.isEmpty) {
+                        val builder = url.newBuilder()
+                            .removeAllQueryParameters("api_key")
+                            .removeAllQueryParameters("user_id")
+                        if (cred.key.isNotBlank()) builder.addQueryParameter("api_key", cred.key)
+                        if (cred.user.isNotBlank()) builder.addQueryParameter("user_id", cred.user)
+                        request = request.newBuilder().url(builder.build()).build()
+                    }
+                }
+
+                val original = request
                 // rule34.xxx sits behind Cloudflare, which challenges/blocks requests
                 // that don't look like a real browser. Sending a clean browser-style
                 // User-Agent (no custom app token) plus standard Accept headers makes

@@ -1,0 +1,30 @@
+--------- beginning of main
+07-13 00:30:42.455   541   541 I adbd    : adbd service requested 'shell,v2:export ANDROID_LOG_TAGS=''; exec logcat '*:V''
+07-13 00:30:42.677  3789  3870 I WM-WorkerWrapper: Worker result SUCCESS for Work [ id=c52239cb-128c-42af-ab52-9e0d9d696f95, tags={ org.strongswan.android.logic.Scheduler$JobWorker, org.strongswan.android.Scheduler.EXECUTE_JOB } ]
+07-13 00:30:42.806  1151  1306 D SatelliteController: isInCarrierRoamingNbIotNtn: satellite is disabled
+07-13 00:30:42.806  1151  1306 D SatelliteController: getCarrierRoamingNtnConnectType: Checking connect type from PLMN config for subId: 1
+07-13 00:30:42.806  1151  1306 D TelephonyConfigUpdateInstallReceiver: getConfigParser: domain=satellite
+07-13 00:30:42.806  1151  1306 V SatelliteController: satelliteConfigParser is not ready
+07-13 00:30:42.806  1151  1306 D SatelliteController: isSatelliteAttachSupportedViaConfigupdater: return null (satelliteConfig is null)
+07-13 00:30:42.806  1151  1306 D SatelliteController: getSatellitePerPlmnConfiguration: invalid subId or not supported via carrier.
+07-13 00:30:42.806  1151  1306 D SatelliteController: getCarrierRoamingNtnConnectType: config: null
+07-13 00:30:42.806  1151  1306 D TelephonyConfigUpdateInstallReceiver: getConfigParser: domain=satellite
+07-13 00:30:42.806  1151  1306 V SatelliteController: satelliteConfigParser is not ready
+07-13 00:30:42.806  1151  1306 D SatelliteController: getCarrierRoamingNtnConnectTypeViaConfigUpdater: return null (satelliteConfig is null)
+07-13 00:30:42.806  1151  1306 D SatelliteController: getCarrierRoamingNtnConnectType: Falling back to global carrier config connect type: 0
+07-13 00:30:42.806  1151  1306 D TelephonyConfigUpdateInstallReceiver: getConfigParser: domain=satellite
+07-13 00:30:42.806  1151  1306 V SatelliteController: satelliteConfigParser is not ready
+07-13 00:30:42.806  1151  1306 D SatelliteController: isSatelliteAttachSupportedViaConfigupdater: return null (satelliteConfig is null)
+07-13 00:30:42.806  1151  1306 D SatelliteController: getCarrierRoamingNtnConnectType: Checking connect type from PLMN config for subId: 1
+07-13 00:30:42.806  1151  1306 D TelephonyConfigUpdateInstallReceiver: getConfigParser: domain=satellite
+07-13 00:30:42.806  1151  1306 V SatelliteController: satelliteConfigParser is not ready
+07-13 00:30:42.806  1151  1306 D SatelliteController: isSatelliteAttachSupportedViaConfigupdater: return null (satelliteConfig is null)
+07-13 00:30:42.807  1151  1306 D SatelliteController: getSatellitePerPlmnConfiguration: invalid subId or not supported via carrier.
+07-13 00:30:42.807  1151  1306 D SatelliteController: getCarrierRoamingNtnConnectType: config: null
+07-13 00:30:42.807  1151  1306 D TelephonyConfigUpdateInstallReceiver: getConfigParser: domain=satellite
+07-13 00:30:42.807  1151  1306 V SatelliteController: satelliteConfigParser is not ready
+07-13 00:30:42.807  1151  1306 D SatelliteController: getCarrierRoamingNtnConnectTypeViaConfigUpdater: return null (satelliteConfig is null)
+07-13 00:30:42.807  1151  1306 D SatelliteController: getCarrierRoamingNtnConnectType: Falling back to global carrier config connect type: 0
+07-13 00:30:42.807  1151  1306 D TelephonyConfigUpdateInstallReceiver: getConfigParser: domain=satellite
+07-13 00:30:42.807  1151  1306 V SatelliteController: satelliteConfigParser is not ready
+07-13 00:30:42.807  1151  1306 D SatelliteController: isSatelliteAttachSupportedViaConfigupdater: return null (satelliteConfig is null)

@@ -29,6 +29,9 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var categoryNavigationState: CategoryNavigationState
 
+    @Inject
+    lateinit var videosNavigationState: com.example.mediabrowser.ui.navigation.VideosNavigationState
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
@@ -41,7 +44,8 @@ class MainActivity : ComponentActivity() {
             MediaBrowserTheme(settings = settings) {
                 MediaBrowserNavGraph(
                     artistNavigationState = artistNavigationState,
-                    categoryNavigationState = categoryNavigationState
+                    categoryNavigationState = categoryNavigationState,
+                    videosNavigationState = videosNavigationState
                 )
             }
         }

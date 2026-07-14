@@ -6,6 +6,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -68,6 +71,7 @@ fun SettingsScreen(
 
     var showAppearance by remember { mutableStateOf(false) }
     var showOthers by remember { mutableStateOf(false) }
+    var showSitePicker by remember { mutableStateOf(false) }
     var showClearCacheDialog by remember { mutableStateOf(false) }
     val uriHandler = LocalUriHandler.current
 
@@ -193,6 +197,17 @@ fun SettingsScreen(
 
             SectionSpacer()
 
+            // Sites — Rule34 (default) or any other supported booru. Switching
+            // retargets the whole app (home, search, details) to that site.
+            val currentSite = com.example.mediabrowser.domain.model.BooruSite.fromSettings(settings)
+            NavRow(
+                title = "Sites",
+                subtitle = if (currentSite.isDefault) "Rule34 (default)" else "Others — ${currentSite.displayName}",
+                onClick = { showSitePicker = true }
+            )
+
+            SectionSpacer()
+
             // Others → modal
             NavRow(
                 title = "Others",
@@ -291,6 +306,23 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(40.dp))
         }
+    }
+
+    if (showSitePicker) {
+        SitePickerModal(
+            current = com.example.mediabrowser.domain.model.BooruSite.fromSettings(settings),
+            accent = accentColor,
+            onSelect = { site ->
+                viewModel.setSite(site)
+                showSitePicker = false
+                android.widget.Toast.makeText(
+                    context,
+                    if (site.isDefault) "Switched to Rule34" else "Switched to ${site.displayName}",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            },
+            onDismiss = { showSitePicker = false }
+        )
     }
 
     if (showAppearance) {
@@ -545,4 +577,169 @@ private fun formatBytes(bytes: Long): String {
     if (bytes <= 0) return "0 MB"
     val mb = bytes / (1024.0 * 1024.0)
     return if (mb < 1024) "%.1f MB".format(mb) else "%.2f GB".format(mb / 1024)
+}
+
+/** Sites picker — Rule34 (default) on top, then every other supported booru. */
+@Composable
+private fun SitePickerModal(
+    current: com.example.mediabrowser.domain.model.BooruSite,
+    accent: Color,
+    onSelect: (com.example.mediabrowser.domain.model.BooruSite) -> Unit,
+    onDismiss: () -> Unit
+) {
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        val viewModel: SettingsViewModel = androidx.hilt.navigation.compose.hiltViewModel()
+        val settings by viewModel.settings.collectAsState()
+
+        androidx.compose.foundation.lazy.LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 620.dp)
+                .background(Color(0xFF1A1D1F), RoundedCornerShape(20.dp))
+                .padding(vertical = 18.dp)
+        ) {
+            item {
+                Text(
+                    "Sites",
+                    color = Color.White,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
+                )
+            }
+            item {
+                SiteRow(
+                    label = "Rule34",
+                    sub = "Default — full experience",
+                    selected = current.isDefault,
+                    accent = accent,
+                    onClick = { onSelect(com.example.mediabrowser.domain.model.BooruSite.RULE34) }
+                )
+            }
+            item {
+                Text(
+                    "Others",
+                    color = SubtleText,
+                    fontSize = 14.sp,
+                    modifier = Modifier.padding(start = 20.dp, top = 12.dp, bottom = 4.dp)
+                )
+            }
+            items(com.example.mediabrowser.domain.model.BooruSite.OTHERS) { site ->
+                SiteRow(
+                    label = site.displayName,
+                    sub = site.apiBaseUrl.removePrefix("https://").trimEnd('/'),
+                    selected = current == site,
+                    accent = accent,
+                    onClick = { onSelect(site) }
+                )
+            }
+            item {
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    "Site API keys",
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
+                )
+                Text(
+                    "Optional for most. Gelbooru requires a key/user pair since 2023.",
+                    color = SubtleText,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
+                )
+            }
+            items(com.example.mediabrowser.domain.model.BooruSite.entries.toList()) { site ->
+                SiteCredentialCard(
+                    site = site,
+                    stored = com.example.mediabrowser.data.remote.SiteCredentialStore.get(settings, site),
+                    accent = accent,
+                    onSave = { key, user -> viewModel.setSiteCredential(site, key, user) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SiteCredentialCard(
+    site: com.example.mediabrowser.domain.model.BooruSite,
+    stored: com.example.mediabrowser.data.remote.SiteApiCredential,
+    accent: Color,
+    onSave: (key: String, user: String) -> Unit
+) {
+    var key by remember(site.name, stored.key) { mutableStateOf(stored.key) }
+    var user by remember(site.name, stored.user) { mutableStateOf(stored.user) }
+    val dirty = key != stored.key || user != stored.user
+
+    Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+        Text(site.displayName, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+        Spacer(Modifier.height(4.dp))
+        OutlinedTextField(
+            value = key,
+            onValueChange = { key = it },
+            singleLine = true,
+            label = { Text("API key", fontSize = 12.sp) },
+            shape = RoundedCornerShape(10.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = Color.White, unfocusedTextColor = Color.White,
+                focusedBorderColor = SubtleText, unfocusedBorderColor = Color(0xFF3A3D42),
+                focusedLabelColor = SubtleText, unfocusedLabelColor = SubtleText,
+                cursorColor = Color.White
+            ),
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(6.dp))
+        OutlinedTextField(
+            value = user,
+            onValueChange = { user = it },
+            singleLine = true,
+            label = { Text("User ID", fontSize = 12.sp) },
+            shape = RoundedCornerShape(10.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = Color.White, unfocusedTextColor = Color.White,
+                focusedBorderColor = SubtleText, unfocusedBorderColor = Color(0xFF3A3D42),
+                focusedLabelColor = SubtleText, unfocusedLabelColor = SubtleText,
+                cursorColor = Color.White
+            ),
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (dirty) {
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                Box(
+                    modifier = Modifier
+                        .background(accent, RoundedCornerShape(8.dp))
+                        .clickable { onSave(key.trim(), user.trim()) }
+                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                ) {
+                    Text("Save", color = Color(0xFF111111), fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SiteRow(label: String, sub: String, selected: Boolean, accent: Color, onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(horizontal = 20.dp, vertical = 10.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, color = if (selected) accent else Color.White, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+            Text(sub, color = SubtleText, fontSize = 13.sp)
+        }
+        androidx.compose.material3.RadioButton(
+            selected = selected,
+            onClick = onClick,
+            colors = androidx.compose.material3.RadioButtonDefaults.colors(
+                selectedColor = accent,
+                unselectedColor = SubtleText
+            )
+        )
+    }
 }

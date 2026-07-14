@@ -44,7 +44,7 @@ class ArchivePagingSource(
             val settings = preferencesDataStore.settingsFlow.first()
             
             // Explicitly use pageSize to ensure consistent page-based indexing for the API
-            val jsonResponse = api.getPosts(
+            val httpResponse = api.getPosts(
                 pageId = currentPage,
                 limit = pageSize,
                 tags = query.ifBlank { null },
@@ -52,30 +52,12 @@ class ArchivePagingSource(
                 userId = settings.apiCredentialTwo.trim().ifBlank { null }
             )
 
-            Log.d("ArchivePagingSource", "Raw JSON response: ${jsonResponse.toString()}")
-
-            // Handle different response types. Use the *OrNull accessors — the
-            // plain .jsonArray / .jsonPrimitive properties THROW on a type mismatch
-            // rather than returning null, which previously crashed the pager when
-            // the API returned an error string instead of an array.
-            val arrayOrNull = (jsonResponse as? kotlinx.serialization.json.JsonArray)
-            val primitiveOrNull = (jsonResponse as? kotlinx.serialization.json.JsonPrimitive)
-            val response: List<ArchivePostDto> = when {
-                arrayOrNull != null -> {
-                    Log.d("ArchivePagingSource", "Loaded page $currentPage with ${arrayOrNull.size} items")
-                    json.decodeFromString<List<ArchivePostDto>>(jsonResponse.toString())
-                }
-                primitiveOrNull != null -> {
-                    // API returned a string message (likely an auth error).
-                    val message = primitiveOrNull.content
-                    Log.e("ArchivePagingSource", "API returned message: $message")
-                    emptyList()
-                }
-                else -> {
-                    Log.d("ArchivePagingSource", "Unexpected response for page $currentPage: ${jsonResponse::class.simpleName}")
-                    emptyList()
-                }
-            }
+            // parsePostResponse auto-detects JSON vs XML — some booru forks
+            // (Realbooru is a known offender) ignore `json=1` and return XML.
+            val body = httpResponse.body()?.string().orEmpty()
+            val response: List<ArchivePostDto> =
+                com.example.mediabrowser.data.remote.parsePostResponse(body)
+            Log.d("ArchivePagingSource", "Loaded page $currentPage with ${response.size} items")
 
             // Handle empty response gracefully
             if (response.isEmpty()) {
@@ -86,8 +68,9 @@ class ArchivePagingSource(
                 )
             }
 
+            val cdnBase = com.example.mediabrowser.domain.model.BooruSite.fromSettings(settings).cdnBase
             val posts = response.map { dto: ArchivePostDto ->
-                dto.toPost(isFavorite = dto.id in favoriteIds)
+                dto.toPost(isFavorite = dto.id in favoriteIds, cdnBase = cdnBase)
             }
 
             LoadResult.Page(

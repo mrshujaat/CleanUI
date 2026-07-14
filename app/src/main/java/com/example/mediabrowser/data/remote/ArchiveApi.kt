@@ -18,7 +18,7 @@ interface ArchiveApi {
         @Query("tags") tags: String? = null,
         @Query("api_key") apiKey: String? = null,
         @Query("user_id") userId: String? = null
-    ): JsonElement
+    ): retrofit2.Response<okhttp3.ResponseBody>
 
     /**
      * Searches for tags matching a name pattern, for autocomplete suggestions.

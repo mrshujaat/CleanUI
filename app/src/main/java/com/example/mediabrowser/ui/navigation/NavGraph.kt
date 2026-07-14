@@ -42,7 +42,8 @@ import com.example.mediabrowser.ui.settings.SettingsScreen
 fun MediaBrowserNavGraph(
     navController: NavHostController = rememberNavController(),
     artistNavigationState: ArtistNavigationState,
-    categoryNavigationState: CategoryNavigationState
+    categoryNavigationState: CategoryNavigationState,
+    videosNavigationState: VideosNavigationState
 ) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
@@ -76,7 +77,27 @@ fun MediaBrowserNavGraph(
                         categoryNavigationState.set(category)
                         navController.navigate(Destination.CategoryDetail.route)
                     },
-                    onNavigateToArtist = onNavigateToArtist
+                    onNavigateToArtist = onNavigateToArtist,
+                    onOpenVideos = { post ->
+                        if (post != null) videosNavigationState.set(post)
+                        navController.navigate(Destination.Videos.route) {
+                            // Don't pop Home off the stack — keep it so the Home
+                            // tab (and system back) return here instead of dead-ending.
+                            launchSingleTop = true
+                        }
+                    }
+                )
+            }
+
+            composable(Destination.Videos.route) {
+                val startPost by videosNavigationState.post.collectAsState()
+                // NOTE: consumption happens inside VideosScreen AFTER it scrolls to
+                // the post (not here) — consuming on mount would null it before the
+                // screen ever reads it, which is why deep-link open silently failed.
+                com.example.mediabrowser.ui.videos.VideosScreen(
+                    onNavigateToArtist = onNavigateToArtist,
+                    startPost = startPost,
+                    onStartPostConsumed = { videosNavigationState.consume() }
                 )
             }
 
@@ -201,6 +222,9 @@ private fun BottomNavBar(navController: NavHostController) {
                     text = navDestination.label,
                     color = Color.White,
                     fontSize = 15.sp,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Visible,
                     modifier = androidx.compose.ui.Modifier
                         .clickable {
                             navController.navigate(destination.route) {

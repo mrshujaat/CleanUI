@@ -106,8 +106,11 @@ fun VideoPlayer(
         }
     }
 
-    // FIXED: React to changing video URLs by mutating properties on the same player instance dynamically
-    LaunchedEffect(videoUrl, loop, startMuted, autoPlay) {
+    // FIXED: React to changing video URLs by mutating properties on the same player instance dynamically.
+    // autoPlay is intentionally NOT a key here — pager pages prepare their video while
+    // off-screen (paused) and then flip playWhenReady on swipe, so playback starts
+    // instantly instead of re-buffering. See the LaunchedEffect below.
+    LaunchedEffect(videoUrl, loop, startMuted) {
         hasError = false
         isBuffering = true
         isMuted = startMuted
@@ -118,6 +121,14 @@ fun VideoPlayer(
         exoPlayer.volume = if (startMuted) 0f else 1f
         exoPlayer.prepare()
         exoPlayer.playWhenReady = autoPlay
+    }
+
+    // TikTok-style page changes: toggling autoPlay only flips playWhenReady on the
+    // already-prepared player — no stop/prepare cycle, so swiped-to videos start
+    // immediately and swiped-away videos pause (and rewind for a clean re-entry).
+    LaunchedEffect(autoPlay) {
+        exoPlayer.playWhenReady = autoPlay
+        if (!autoPlay) exoPlayer.seekTo(0L)
     }
 
     // Poll playback position/duration while controls are visible, so the

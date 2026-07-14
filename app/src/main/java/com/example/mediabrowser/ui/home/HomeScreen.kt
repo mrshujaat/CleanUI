@@ -25,6 +25,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.paging.compose.collectAsLazyPagingItems
 import com.example.mediabrowser.domain.model.ArtistProfile
 import com.example.mediabrowser.domain.model.HomeCategory
+import com.example.mediabrowser.domain.model.Post
 import com.example.mediabrowser.ui.components.PagedPostGrid
 import com.example.mediabrowser.ui.components.PostFeedScreen
 import com.example.mediabrowser.ui.components.appBackgroundGradient
@@ -35,6 +36,7 @@ fun HomeScreen(
     onNavigateToSearch: () -> Unit,
     onOpenCategory: (HomeCategory) -> Unit,
     onNavigateToArtist: (ArtistProfile) -> Unit,
+    onOpenVideos: (Post?) -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val pagingItems = viewModel.trendingFeed.collectAsLazyPagingItems()
@@ -42,6 +44,7 @@ fun HomeScreen(
     val openFeedIndex by viewModel.openFeedIndex.collectAsState()
     val mostPopularPreview by viewModel.mostPopularPreview.collectAsState()
     val trendingPreview by viewModel.trendingPreview.collectAsState()
+    val videosPreview by viewModel.videosPreview.collectAsState()
     val topSeriesCards by viewModel.topSeriesCards.collectAsState()
     val accentColor = parseHexColor(settings.accentColorHex, Color(0xFF2DD4BF))
 
@@ -67,27 +70,47 @@ fun HomeScreen(
                         modifier = Modifier.height(paddingValues.calculateTopPadding() + 12.dp)
                     )
 
+                    // Active booru site drives the home layout: Rule34 keeps the
+                    // full experience; any "Others" site gets the r34.app-style
+                    // front — Top Charts + New rows, no Rule34 franchise row.
+                    val site = com.example.mediabrowser.domain.model.BooruSite.fromSettings(settings)
+
                     HomeCategoryRow(
-                        title = HomeCategory.MostPopular.title,
+                        title = if (site.isDefault) HomeCategory.MostPopular.title else "Top Charts",
                         posts = mostPopularPreview,
                         onSeeAllClick = { onOpenCategory(HomeCategory.MostPopular) }
                     )
 
                     HomeCategoryRow(
-                        title = HomeCategory.Trending.title,
+                        title = if (site.isDefault) HomeCategory.Trending.title else "New",
                         posts = trendingPreview,
                         onSeeAllClick = { onOpenCategory(HomeCategory.Trending) }
                     )
 
-                    TopSeriesRow(
-                        cards = topSeriesCards,
-                        onCardClick = { category -> onOpenCategory(category) }
-                    )
+                    if (videosPreview.isNotEmpty()) {
+                        HomeCategoryRow(
+                            title = "Videos",
+                            posts = videosPreview,
+                            onSeeAllClick = { onOpenVideos(null) },
+                            onCardClick = { post -> onOpenVideos(post) }
+                        )
+                    }
 
-                    // Label for the main feed below: reflects the Home feed type.
+                    if (site.isDefault) {
+                        TopSeriesRow(
+                            cards = topSeriesCards,
+                            onCardClick = { category -> onOpenCategory(category) }
+                        )
+                    }
+
+                    // Label for the main feed below: reflects the Home feed type
+                    // (and, on other sites, which booru is being browsed).
                     Text(
-                        text = if (settings.homeFeedType == com.example.mediabrowser.domain.model.FeedType.POISON)
-                            "My Poison" else "Your Feed",
+                        text = when {
+                            settings.homeFeedType == com.example.mediabrowser.domain.model.FeedType.POISON -> "My Poison"
+                            site.isDefault -> "Your Feed"
+                            else -> "${site.displayName} — Latest"
+                        },
                         color = Color.White,
                         fontSize = 20.sp,
                         fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,

@@ -4,25 +4,59 @@ import com.example.mediabrowser.data.remote.dto.ArchivePostDto
 import com.example.mediabrowser.domain.model.MediaType
 import com.example.mediabrowser.domain.model.Post
 
-fun ArchivePostDto.toPost(isFavorite: Boolean): Post {
+/**
+ * @param cdnBase When non-blank AND the API returned blank URLs, construct the
+ *   image URLs from directory+image (TBIB/Realbooru/etc. only send those, which
+ *   is why their grids were all grey boxes — file_url came back empty). Standard
+ *   Gelbooru path layout: full at /images/<dir>/<image>, thumb at
+ *   /thumbnails/<dir>/thumbnail_<imageBaseName>.jpg.
+ */
+fun ArchivePostDto.toPost(isFavorite: Boolean, cdnBase: String = ""): Post {
     val tagList = this.tags.split(" ").filter { it.isNotBlank() }
-    
-    val isVideo = this.fileUrl.endsWith(".mp4", ignoreCase = true) || 
-                  this.fileUrl.endsWith(".webm", ignoreCase = true)
+
+    // Construct URLs from directory+image when the API omits full URLs.
+    val constructedFull: String
+    val constructedPreview: String
+    if (cdnBase.isNotBlank() && this.fileUrl.isBlank() && !this.image.isNullOrBlank() && this.directory != null) {
+        val base = cdnBase.trimEnd('/')
+        val dir = this.directory
+        val img = this.image
+        val thumbBase = img.substringBeforeLast('.')
+        constructedFull = "$base/images/$dir/$img"
+        // Booru thumbnails are jpg regardless of the source extension.
+        constructedPreview = "$base/thumbnails/$dir/thumbnail_$thumbBase.jpg"
+    } else {
+        constructedFull = ""
+        constructedPreview = ""
+    }
+
+    // MediaType from the actual filename (fileUrl, or the raw `image` field).
+    val filename = (this.fileUrl.ifBlank { this.image.orEmpty() }).lowercase()
+    val isVideo = filename.endsWith(".mp4") || filename.endsWith(".webm")
+    val isGif = filename.endsWith(".gif")
+
+    // Robust URL selection with construction fallback.
+    val effectiveFile = this.fileUrl.ifBlank { constructedFull }
+    val effectivePreview = this.previewUrl
+        .ifBlank { constructedPreview }
+        .ifBlank { this.sampleUrl }
+        .ifBlank { effectiveFile }
+    val effectiveSample = this.sampleUrl.ifBlank { effectiveFile.ifBlank { effectivePreview } }
 
     return Post(
         id = this.id,
-        previewUrl = this.previewUrl,
-        thumbnailUrl = this.previewUrl, // Maps previewUrl directly into your required thumbnailUrl field
-        // sample_url is the medium, pre-resampled image (~850px). It's the "sweet spot"
-        // r34.app displays: sharp enough to look good, a fraction of the full file size,
-        // so it loads fast. Falls back to file_url if the API omits a sample.
-        sampleUrl = this.sampleUrl.ifBlank { this.fileUrl },
-        fileUrl = this.fileUrl,
+        previewUrl = effectivePreview,
+        thumbnailUrl = effectivePreview,
+        sampleUrl = effectiveSample,
+        fileUrl = effectiveFile,
         width = this.width,
         height = this.height,
         score = this.score,
-        fileType = if (isVideo) MediaType.VIDEO else MediaType.IMAGE,
+        fileType = when {
+            isVideo -> MediaType.VIDEO
+            isGif -> MediaType.GIF
+            else -> MediaType.IMAGE
+        },
         tags = tagList,
         isFavorite = isFavorite
     )

@@ -9,6 +9,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -95,38 +97,26 @@ fun SearchScreen(
         // header swaps based on state.
         val showSuggestions = suggestions.isNotEmpty() && query.text.isNotBlank()
 
-        Column(
+        // The header now FLOATS over the content on a transparent layer: results
+        // scroll behind it, scrolling down hides it, scrolling up brings it back.
+        var headerVisible by remember { mutableStateOf(true) }
+        var headerHeightPx by remember { mutableStateOf(0) }
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        val headerHeightDp = with(density) { headerHeightPx.toDp() }
+
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-                SearchHeader(
-                    query = query,
-                    onQueryChanged = viewModel::onQueryChanged,
-                    selectedTags = selectedTags,
-                    onTagRemoved = viewModel::onTagRemoved,
-                    onSubmit = viewModel::onSearchSubmit,
-                    onClear = viewModel::clearSearch,
-                    onPasteTags = viewModel::pasteTags,
-                    onAddAsBatch = { showSaveBatchDialog = true }
-                )
-                if (selectedTags.isNotEmpty() && !showSuggestions) {
-                    Box(
-                        modifier = Modifier
-                            .padding(top = 8.dp)
-                            .border(1.dp, Color(0xFF8A8D91), RoundedCornerShape(50))
-                            .clickable { showSaveBatchDialog = true }
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
-                    ) {
-                        Text("Save Batch", color = Color.White, fontSize = 14.sp)
-                    }
-                }
-            }
-
+            // ---- Content layer (fills the screen; scrolls under the header) ----
             when {
                 showSuggestions -> {
-                    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                    Column(
+                        modifier = Modifier
+                            .padding(top = headerHeightDp)
+                            .padding(horizontal = 16.dp)
+                    ) {
                         TagSuggestionsList(suggestions, viewModel::onTagSelected)
                     }
                 }
@@ -150,6 +140,12 @@ fun SearchScreen(
                             Text("No results found.", color = Color(0xFF8A8D91), modifier = Modifier.padding(24.dp))
                         },
                         onBack = { viewModel.backToTagEditing() },
+                        // First grid item reserves the header's height so results
+                        // start below the floating bar, then scroll behind it.
+                        headerContent = {
+                            androidx.compose.foundation.layout.Spacer(Modifier.height(headerHeightDp))
+                        },
+                        onScrollDirectionChanged = { scrolledDown -> headerVisible = !scrolledDown },
                         modifier = Modifier.fillMaxSize()
                     )
 
@@ -165,9 +161,56 @@ fun SearchScreen(
                     }
                 }
                 else -> {
-                    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(top = headerHeightDp)
+                            .padding(horizontal = 16.dp)
+                    ) {
                         SearchHint()
                     }
+                }
+            }
+
+            // ---- Floating header layer (transparent — content shows through) ----
+            // Always shown while typing/suggestions or before a search; while
+            // browsing results it follows scroll direction.
+            androidx.compose.animation.AnimatedVisibility(
+                visible = headerVisible || !isSearchActive || showSuggestions,
+                enter = androidx.compose.animation.slideInVertically(initialOffsetY = { -it }) +
+                    androidx.compose.animation.fadeIn(),
+                exit = androidx.compose.animation.slideOutVertically(targetOffsetY = { -it }) +
+                    androidx.compose.animation.fadeOut(),
+                modifier = Modifier.align(Alignment.TopCenter)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .onGloballyPositioned { headerHeightPx = it.size.height }
+                ) {
+                    SearchHeader(
+                        query = query,
+                        onQueryChanged = viewModel::onQueryChanged,
+                        selectedTags = selectedTags,
+                        onTagRemoved = viewModel::onTagRemoved,
+                        onSubmit = viewModel::onSearchSubmit,
+                        onClear = viewModel::clearSearch,
+                        onPasteTags = viewModel::pasteTags,
+                        onAddAsBatch = { showSaveBatchDialog = true }
+                    )
+                    if (selectedTags.isNotEmpty() && !showSuggestions) {
+                        Box(
+                            modifier = Modifier
+                                .padding(top = 8.dp)
+                                .border(1.dp, Color(0xFF8A8D91), RoundedCornerShape(50))
+                                .clickable { showSaveBatchDialog = true }
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                        ) {
+                            Text("Save Batch", color = Color.White, fontSize = 14.sp)
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
                 }
             }
 
@@ -262,6 +305,10 @@ private fun TagSearchField(
         Box(
             modifier = Modifier
                 .weight(1f)
+                // Solid dark fill so the bar reads as a floating black pill on top
+                // of the results grid — transparency showed the grid images through
+                // and looked broken. Border kept for definition.
+                .background(Color(0xFF0B0C0E), RoundedCornerShape(16.dp))
                 .border(1.dp, Color(0xFF8A8D91), RoundedCornerShape(16.dp))
                 .combinedClickable(
                     onClick = { focusRequester.requestFocus() },

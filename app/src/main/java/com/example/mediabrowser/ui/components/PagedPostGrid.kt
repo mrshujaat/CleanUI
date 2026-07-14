@@ -8,6 +8,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -41,8 +46,36 @@ fun PagedPostGrid(
     modifier: Modifier = Modifier,
     headerContent: @Composable () -> Unit = {},
     emptyContent: @Composable () -> Unit = {},
-    onBack: (() -> Unit)? = null
+    onBack: (() -> Unit)? = null,
+    // Reports scroll direction so callers can collapse/reveal a header above the
+    // grid: true = user scrolled DOWN (hide header), false = scrolled UP (show it).
+    onScrollDirectionChanged: ((scrolledDown: Boolean) -> Unit)? = null
 ) {
+    // Hoisted scroll states so we can observe scroll direction and report it up
+    // (used by Search to collapse/reveal its header). One per layout type; only
+    // the active one is ever attached to a live grid.
+    val staggeredState = androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState()
+    val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+
+    if (onScrollDirectionChanged != null) {
+        val isMasonry = layoutStyle == LayoutStyle.MASONRY
+        val index = if (isMasonry) staggeredState.firstVisibleItemIndex else gridState.firstVisibleItemIndex
+        val offset = if (isMasonry) staggeredState.firstVisibleItemScrollOffset else gridState.firstVisibleItemScrollOffset
+        var prevIndex by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0) }
+        var prevOffset by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0) }
+        androidx.compose.runtime.LaunchedEffect(index, offset) {
+            val scrolledDown = when {
+                index != prevIndex -> index > prevIndex
+                else -> offset > prevOffset
+            }
+            // Ignore tiny jitters near the very top so the header doesn't flicker.
+            if (index > 0 || offset > 8) onScrollDirectionChanged(scrolledDown)
+            else onScrollDirectionChanged(false)
+            prevIndex = index
+            prevOffset = offset
+        }
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         when {
             items.loadState.refresh is LoadState.Error && items.itemCount == 0 -> {
@@ -72,6 +105,7 @@ fun PagedPostGrid(
                 when (layoutStyle) {
                     LayoutStyle.MASONRY -> {
                         androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid(
+                            state = staggeredState,
                             columns = androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells.Fixed(columns),
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(12.dp),
@@ -112,6 +146,7 @@ fun PagedPostGrid(
                     }
                     LayoutStyle.GRID -> {
                         androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                            state = gridState,
                             columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(columns),
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(12.dp),

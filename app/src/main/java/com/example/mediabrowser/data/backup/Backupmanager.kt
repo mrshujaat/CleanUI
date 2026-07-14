@@ -118,6 +118,7 @@ class BackupManager @Inject constructor(
         // API credentials are restored too so the user doesn't have to re-enter them.
         preferencesDataStore.setApiCredentialOne(s.apiCredentialOne)
         preferencesDataStore.setApiCredentialTwo(s.apiCredentialTwo)
+        preferencesDataStore.setSiteCredentials(s.siteCredentials)
     }
 
     companion object {
@@ -192,7 +193,8 @@ private data class SettingsDto(
     val favoritesLayoutStyle: String = "MASONRY",
     val homeFeedType: String = "DEFAULT",
     val apiCredentialOne: String = "",
-    val apiCredentialTwo: String = ""
+    val apiCredentialTwo: String = "",
+    val siteCredentials: String = ""
 )
 
 // --- Mappers ---
@@ -228,5 +230,6 @@ private fun com.example.mediabrowser.domain.model.AppSettings.toDto() = Settings
     favoritesLayoutStyle = favoritesLayoutStyle.name,
     homeFeedType = homeFeedType.name,
     apiCredentialOne = apiCredentialOne,
-    apiCredentialTwo = apiCredentialTwo
+    apiCredentialTwo = apiCredentialTwo,
+    siteCredentials = siteCredentials
 )

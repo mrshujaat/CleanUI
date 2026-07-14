@@ -57,6 +57,7 @@ fun HomeCategoryRow(
     title: String,
     posts: List<Post>,
     onSeeAllClick: () -> Unit,
+    onCardClick: ((Post) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -80,7 +81,7 @@ fun HomeCategoryRow(
                 contentPadding = PaddingValues(horizontal = 16.dp)
             ) {
                 itemsIndexed(posts) { index, post ->
-                    HomeRowCard(post = post, onClick = onSeeAllClick)
+                    HomeRowCard(post = post, onClick = { onCardClick?.invoke(post) ?: onSeeAllClick() })
                 }
             }
         }

@@ -1,6 +1,5 @@
 package com.example.mediabrowser.data.repository
 
-import kotlinx.serialization.json.jsonArray
 import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.PagingData
@@ -148,23 +147,21 @@ class MediaRepositoryImpl @Inject constructor(
     override suspend fun getTopPostForTag(tag: String): Post? {
         return try {
             val settings = preferencesDataStore.settingsFlow.first()
-            val jsonResponse = archiveApi.getPosts(
+            val httpResponse = archiveApi.getPosts(
                 pageId = 0,
                 limit = 1,
                 tags = "sort:score $tag",
                 apiKey = settings.apiCredentialOne.trim().ifBlank { null },
                 userId = settings.apiCredentialTwo.trim().ifBlank { null }
             )
-
-            val posts: List<ArchivePostDto> = when {
-                jsonResponse.jsonArray != null ->
-                    Json { ignoreUnknownKeys = true }.decodeFromString(jsonResponse.toString())
-                else -> emptyList()
-            }
+            val posts: List<ArchivePostDto> =
+                com.example.mediabrowser.data.remote.parsePostResponse(
+                    httpResponse.body()?.string().orEmpty()
+                )
 
             val dto = posts.firstOrNull() ?: return null
             val favoriteIds = observeFavoriteIds().first()
-            dto.toPost(isFavorite = dto.id in favoriteIds)
+            dto.toPost(isFavorite = dto.id in favoriteIds, cdnBase = com.example.mediabrowser.domain.model.BooruSite.fromSettings(settings).cdnBase)
         } catch (e: Exception) {
             android.util.Log.e("MediaRepository", "getTopPostForTag failed for $tag", e)
             null
@@ -178,20 +175,19 @@ class MediaRepositoryImpl @Inject constructor(
     override suspend fun getPostsFlat(tags: String, limit: Int): List<Post> {
         return try {
             val settings = preferencesDataStore.settingsFlow.first()
-            val jsonResponse = archiveApi.getPosts(
+            val httpResponse = archiveApi.getPosts(
                 pageId = 0,
                 limit = limit,
                 tags = tags.ifBlank { null },
                 apiKey = settings.apiCredentialOne.trim().ifBlank { null },
                 userId = settings.apiCredentialTwo.trim().ifBlank { null }
             )
-            val posts: List<ArchivePostDto> = when {
-                jsonResponse.jsonArray != null ->
-                    Json { ignoreUnknownKeys = true }.decodeFromString(jsonResponse.toString())
-                else -> emptyList()
-            }
+            val posts: List<ArchivePostDto> =
+                com.example.mediabrowser.data.remote.parsePostResponse(
+                    httpResponse.body()?.string().orEmpty()
+                )
             val favoriteIds = observeFavoriteIds().first()
-            posts.map { dto -> dto.toPost(isFavorite = dto.id in favoriteIds) }
+            posts.map { dto -> dto.toPost(isFavorite = dto.id in favoriteIds, cdnBase = com.example.mediabrowser.domain.model.BooruSite.fromSettings(settings).cdnBase) }
         } catch (e: Exception) {
             android.util.Log.e("MediaRepository", "getPostsFlat failed for tags=$tags", e)
             emptyList()
@@ -418,10 +414,17 @@ class MediaRepositoryImpl @Inject constructor(
         // Two sources, merged:
         //  1) PRIMARY (orange): the native autocomplete endpoint — same ranked,
         //     alias-aware results r34.app shows. These come first.
+        //     Rule34-only: other boorus don't expose this endpoint, so they
+        //     rely entirely on the (site-correct) DAPI prefix search below.
         //  2) SECONDARY: prefix-match from the tag endpoint (cat → cat_girl,
         //     cat_ears, caty…) for broader coverage autocomplete may miss.
         // Autocomplete results win on dedupe so a tag in both stays orange.
-        val primary = fetchAutocompleteSuggestions(term, apiKey, userId)
+        val site = com.example.mediabrowser.domain.model.BooruSite.fromSettings(settings)
+        val primary = if (site.supportsAutocomplete) {
+            fetchAutocompleteSuggestions(term, apiKey, userId)
+        } else {
+            emptyList()
+        }
         val secondary = fetchPrefixSuggestions(term, apiKey, userId)
 
         val seen = HashSet<String>()
@@ -429,10 +432,22 @@ class MediaRepositoryImpl @Inject constructor(
         primary.forEach { if (seen.add(it.name)) merged += it }
         secondary.forEach { if (seen.add(it.name)) merged += it }
 
+        // Free cache warming: every suggestion carries its real category, so
+        // remember them all. Tags you searched for (or even just saw suggested)
+        // then categorize INSTANTLY when a post's details open — including
+        // artists, which the heuristic alone can't identify.
+        ensureTagCacheLoaded()
+        merged.forEach { tagCategoryCache[it.name] = it }
+
         return Result.success(merged)
     }
 
-    /** Native autocomplete — marked primary (orange), kept in the site's ranking. */
+    /** Native autocomplete — marked primary (orange), kept in the site's ranking.
+     *  Only Rule34 exposes this endpoint. Callers must guard on site.supportsAutocomplete
+     *  before invoking; other sites would hit an XML/HTML page and crash the JSON parse
+     *  (this was the "anin" crash — my host interceptor rewrote the autocomplete host
+     *  to the wrong site).
+     */
     private suspend fun fetchAutocompleteSuggestions(
         term: String,
         apiKey: String?,
@@ -479,10 +494,15 @@ class MediaRepositoryImpl @Inject constructor(
      */
     private fun parseAutocompleteJson(json: String): List<TagSuggestion> {
         if (json.isBlank()) return emptyList()
+        // Some sites return XML or an HTML error page for this endpoint; bail
+        // before Json.parseToJsonElement throws (was the "anin" crash cause).
+        val trimmed = json.trimStart()
+        if (!trimmed.startsWith("[") && !trimmed.startsWith("{")) return emptyList()
         return try {
-            val arr = Json.parseToJsonElement(json).jsonArray
-            arr.mapNotNull { element ->
-                val obj = element as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+            val element = Json.parseToJsonElement(trimmed)
+            val arr = (element as? kotlinx.serialization.json.JsonArray) ?: return emptyList()
+            arr.mapNotNull { element2 ->
+                val obj = element2 as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
                 fun str(key: String): String? =
                     (obj[key] as? kotlinx.serialization.json.JsonPrimitive)?.content
 

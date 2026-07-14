@@ -20,11 +20,49 @@ import javax.inject.Inject
 class SettingsViewModel @Inject constructor(
     private val preferencesDataStore: PreferencesDataStore,
     private val repository: MediaRepository,
-    private val backupManager: com.example.mediabrowser.data.backup.BackupManager
+    private val backupManager: com.example.mediabrowser.data.backup.BackupManager,
+    private val apiHostProvider: com.example.mediabrowser.data.remote.ApiHostProvider
 ) : ViewModel() {
 
     val settings: StateFlow<AppSettings> = preferencesDataStore.settingsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppSettings())
+
+    /**
+     * Switch the active booru site. The host provider updates synchronously so
+     * the very next API request already targets the new site; persisting the
+     * choice makes Home/Search react (their feeds key on the provider name).
+     */
+    fun setSite(site: com.example.mediabrowser.domain.model.BooruSite) {
+        apiHostProvider.update(site)
+        viewModelScope.launch {
+            preferencesDataStore.setApiProviderName(site.name)
+            preferencesDataStore.setApiBaseUrl(site.apiBaseUrl)
+        }
+    }
+
+    /** Update stored key/user for one site — takes effect on the next request. */
+    fun setSiteCredential(
+        site: com.example.mediabrowser.domain.model.BooruSite,
+        key: String,
+        user: String
+    ) {
+        viewModelScope.launch {
+            val current = settings.value
+            val map = com.example.mediabrowser.data.remote.SiteCredentialStore.all(current).toMutableMap()
+            val cred = com.example.mediabrowser.data.remote.SiteApiCredential(key = key, user = user)
+            if (cred.isEmpty) map.remove(site.name) else map[site.name] = cred
+            preferencesDataStore.setSiteCredentials(
+                com.example.mediabrowser.data.remote.SiteCredentialStore.serialize(map)
+            )
+            // Rule34 also mirrors into the legacy fields so the existing top-level
+            // API section (still shown for Rule34) stays in sync with this entry.
+            if (site == com.example.mediabrowser.domain.model.BooruSite.RULE34) {
+                preferencesDataStore.setApiCredentialOne(key)
+                preferencesDataStore.setApiCredentialTwo(user)
+            }
+            apiHostProvider.refreshCredentials()
+        }
+    }
 
     private val _cacheSizeBytes = MutableStateFlow(0L)
     val cacheSizeBytes: StateFlow<Long> = _cacheSizeBytes.asStateFlow()

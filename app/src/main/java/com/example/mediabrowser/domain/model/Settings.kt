@@ -36,7 +36,14 @@ data class AppSettings(
     val apiProviderName: String = "",
     val apiBaseUrl: String = "",
     val apiCredentialOne: String = "",   // e.g. API Key / Client ID, depending on provider
-    val apiCredentialTwo: String = ""    // e.g. Client Secret, optional, depending on provider
+    val apiCredentialTwo: String = "",   // e.g. Client Secret, optional, depending on provider
+    /**
+     * Per-site API credentials as a JSON object:
+     *   { "GELBOORU": { "key": "...", "user": "..." }, "XBOORU": {...} }
+     * Keys are [BooruSite.name]. Rule34 falls back to [apiCredentialOne]/
+     * [apiCredentialTwo] for backwards compatibility with existing installs.
+     */
+    val siteCredentials: String = ""
 )
 
 enum class DarkModeOption {

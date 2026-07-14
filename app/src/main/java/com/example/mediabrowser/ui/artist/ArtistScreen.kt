@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.Icon
@@ -47,9 +49,11 @@ fun ArtistScreen(
 
     LaunchedEffect(profile.artistId) {
         viewModel.load(profile)
+        viewModel.refreshArtistFavorite(profile.postQuery, profile.displayName)
     }
 
     val pagingItems = viewModel.posts.collectAsLazyPagingItems()
+    val isArtistFav by viewModel.isArtistFavorite.collectAsState()
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -67,7 +71,12 @@ fun ArtistScreen(
             },
             onToggleFavorite = { post -> viewModel.toggleFavorite(post) },
             headerContent = {
-                ArtistHeader(profile = profile, onBackClick = onBackClick)
+                ArtistHeader(
+                    profile = profile,
+                    onBackClick = onBackClick,
+                    isFavorite = isArtistFav,
+                    onToggleFavorite = { viewModel.toggleArtistFavorite() }
+                )
             },
             emptyContent = {
                 Text(
@@ -94,7 +103,12 @@ fun ArtistScreen(
 }
 
 @Composable
-private fun ArtistHeader(profile: ArtistProfile, onBackClick: () -> Unit) {
+private fun ArtistHeader(
+    profile: ArtistProfile,
+    onBackClick: () -> Unit,
+    isFavorite: Boolean = false,
+    onToggleFavorite: () -> Unit = {}
+) {
     Column(modifier = Modifier.padding(horizontal = 8.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 16.dp),
@@ -102,6 +116,16 @@ private fun ArtistHeader(profile: ArtistProfile, onBackClick: () -> Unit) {
         ) {
             IconButton(onClick = onBackClick) {
                 Icon(Icons.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+            }
+            androidx.compose.foundation.layout.Spacer(modifier = Modifier.weight(1f))
+            // Favourite THIS artist — so you can follow them without leaving the page.
+            IconButton(onClick = onToggleFavorite) {
+                Icon(
+                    imageVector = if (isFavorite) Icons.Filled.Favorite
+                    else Icons.Outlined.FavoriteBorder,
+                    contentDescription = if (isFavorite) "Unfollow artist" else "Follow artist",
+                    tint = if (isFavorite) Color(0xFFE53935) else Color.White
+                )
             }
         }
 

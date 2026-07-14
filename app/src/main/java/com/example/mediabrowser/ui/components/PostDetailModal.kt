@@ -9,6 +9,9 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -118,6 +121,14 @@ fun InlineDetailContent(
             .background(Color(0xFF000000))
     ) {
         DetailSections(detail = detail, onTagAction = onTagAction)
+        // Trailing clearance so the LAST section (Meta) always scrolls fully
+        // above the gesture/navigation bar, regardless of what container hosts
+        // this content (dialogs can report zero nav-bar insets to their children).
+        Spacer(
+            modifier = Modifier.height(
+                WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 72.dp
+            )
+        )
     }
 }
 
@@ -235,7 +246,13 @@ private fun DetailSections(
 fun FloatingSearchPillBar(
     searchTags: List<String>,
     onTagRemoved: (String) -> Unit,
-    onSubmit: () -> Unit
+    onSubmit: () -> Unit,
+    // Optional live-typed query. When these are non-null the pill bar becomes
+    // an editable input — typing adds text after the pills, hitting space
+    // commits a tag, IME Search fires onSubmit. Passing null preserves the
+    // original pills-only behavior for callers that don't want typing.
+    queryText: androidx.compose.ui.text.input.TextFieldValue? = null,
+    onQueryChanged: ((androidx.compose.ui.text.input.TextFieldValue) -> Unit)? = null
 ) {
     Row(
         verticalAlignment = Alignment.Top,
@@ -255,6 +272,35 @@ fun FloatingSearchPillBar(
             ) {
                 searchTags.forEach { tag ->
                     SearchTagPill(tag = tag, onRemove = { onTagRemoved(tag) })
+                }
+
+                if (queryText != null && onQueryChanged != null) {
+                    androidx.compose.foundation.text.BasicTextField(
+                        value = queryText,
+                        onValueChange = onQueryChanged,
+                        singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            imeAction = androidx.compose.ui.text.input.ImeAction.Search
+                        ),
+                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                            onSearch = { onSubmit() }
+                        ),
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(Color.White),
+                        decorationBox = { innerTextField ->
+                            if (queryText.text.isEmpty() && searchTags.isEmpty()) {
+                                Text(
+                                    "Add more tags...",
+                                    color = Color(0xFF6B6E72),
+                                    fontSize = 14.sp
+                                )
+                            }
+                            innerTextField()
+                        },
+                        modifier = Modifier
+                            .padding(vertical = 4.dp)
+                            .widthIn(min = 40.dp)
+                    )
                 }
             }
         }

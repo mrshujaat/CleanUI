@@ -72,6 +72,28 @@ class ArtistViewModel @Inject constructor(
         viewModelScope.launch { repository.toggleFavorite(post) }
     }
 
+    private val _isArtistFavorite = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val isArtistFavorite: kotlinx.coroutines.flow.StateFlow<Boolean> = _isArtistFavorite
+
+    private var currentArtistName: String = ""
+    private var currentArtistDisplay: String = ""
+
+    fun refreshArtistFavorite(name: String, displayName: String) {
+        currentArtistName = name
+        currentArtistDisplay = displayName
+        viewModelScope.launch {
+            _isArtistFavorite.value = repository.isArtistFavorite(name)
+        }
+    }
+
+    fun toggleArtistFavorite() {
+        val name = currentArtistName.ifBlank { return }
+        viewModelScope.launch {
+            repository.toggleFavoriteArtist(name, currentArtistDisplay, 0)
+            _isArtistFavorite.value = repository.isArtistFavorite(name)
+        }
+    }
+
     fun downloadPost(post: Post) {
         viewModelScope.launch { repository.enqueueDownload(post) }
     }
